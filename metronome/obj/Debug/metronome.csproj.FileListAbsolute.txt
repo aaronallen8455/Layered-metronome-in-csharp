@@ -1,0 +1,8 @@
+B:\Documents\VisualStudio\metronome\metronome\bin\Debug\metronome.exe.config
+B:\Documents\VisualStudio\metronome\metronome\bin\Debug\metronome.exe
+B:\Documents\VisualStudio\metronome\metronome\bin\Debug\metronome.pdb
+B:\Documents\VisualStudio\metronome\metronome\obj\Debug\metronome.csprojResolveAssemblyReference.cache
+B:\Documents\VisualStudio\metronome\metronome\obj\Debug\metronome.exe
+B:\Documents\VisualStudio\metronome\metronome\obj\Debug\metronome.pdb
+B:\Documents\VisualStudio\metronome\metronome\bin\Debug\NAudio.dll
+B:\Documents\VisualStudio\metronome\metronome\bin\Debug\NAudio.xml
