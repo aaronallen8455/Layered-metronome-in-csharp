@@ -23,24 +23,8 @@ namespace Metronome
 {
     class Program
     {
-        
-
         static void Main(string[] args)
         {
-            //WasapiOut test = new WasapiOut(AudioClientShareMode.Exclusive, 1);
-            //IWaveProvider pro = new WaveFileReader();
-            //test.Init(new );
-            //test.Play();
-
-            //IWavePlayer wavePlayer = new WasapiOut(AudioClientShareMode.Shared, true, 30);
-            //AudioFileReader audioFile = new AudioFileReader("snare_xstick_v16.wav");
-            //audioFile.Volume = 1.0f;
-            //wavePlayer.Init(audioFile);
-            //wavePlayer.Play();
-            //Thread.Sleep(1000);
-            //audioFile.Position = 0;
-            //wavePlayer.Play();
-
             var ride = new WaveAudioSource("ride_center_v8.wav");
             var stick = new WaveAudioSource("snare_xstick_v16.wav");
             var hihat = new WaveAudioSource("hihat_pedal_v5.wav");
@@ -48,13 +32,13 @@ namespace Metronome
             var layer1 = new Layer(ride);
             layer1.SetBeat(new TimeInterval[]
             {
-                new TimeInterval("1000")
+                new TimeInterval("4000/7")
             });
             
             var layer2 = new Layer(stick);
             layer2.SetBeat(new TimeInterval[]
             {
-                new TimeInterval("4000/8"), new TimeInterval("1000/3"), new TimeInterval("1000/3")
+                new TimeInterval("4000/5")//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
             });
             
             var layer3 = new Layer(hihat);
@@ -66,7 +50,7 @@ namespace Metronome
             Metronome metronome = Metronome.GetInstance();
             metronome.AddLayer(layer1);
             metronome.AddLayer(layer2);
-            //metronome.AddLayer(layer3);
+            metronome.AddLayer(layer3);
             
             Thread.Sleep(2000);
             
@@ -77,8 +61,6 @@ namespace Metronome
             ride.Dispose();
             stick.Dispose();
             hihat.Dispose();
-
-
         }
     }
 
@@ -135,6 +117,7 @@ namespace Metronome
             //foreach (Layer layer in ls) Task.Run(() => layer.Play());
             if (ls.Any())
             {
+                Console.WriteLine(ls.Count());
                 new Thread(() => { foreach (Layer layer in ls) layer.Play(); }).Start();
                 foreach (Layer layer in ls) layer.Progress();
             }
@@ -151,6 +134,8 @@ namespace Metronome
 
         protected AudioSource AudioSource;
 
+        public float Remainder = 0F; // holds the accumulating fractional milliseconds.
+
         public Layer(AudioSource audioSource)
         {
             AudioSource = audioSource;
@@ -158,6 +143,7 @@ namespace Metronome
 
         public void SetBeat(TimeInterval[] beat)
         {
+            for (int i = 0; i < beat.Count(); i++) beat[i].Layer = this;
             Beat = beat.ToList();
             //BeatForecast = beat.ToList();
         }
@@ -251,24 +237,30 @@ namespace Metronome
 
     class TimeInterval
     {
-        private long Whole;
-        private int Numerator;
-        private int Denominator;
-        private int I = 0; // for iterating over denominator
+        protected long Whole;
+        protected float R; // fractional portion
+        public Layer Layer;
+        //private int Numerator;
+        //private int Denominator;
+        //private int I = 0; // for iterating over denominator
 
         public long Milliseconds
         {
             get
             {
-                if (Numerator > 0)
+                Layer.Remainder += R;
+                if (Layer.Remainder >= 1)
                 {
-                    I++;
-                    if (I == Denominator)
-                    {
-                        I = 0;
-                        return Whole + Numerator;
-                    }
+                    Layer.Remainder -= 1;
+                    
+                    //I++;
+                    //if (I == Denominator)
+                    //{
+                    //    I = 0;
+                    return Whole + 1;
+                    //}
                 }
+                //Ra += R;
                 return Whole;
             }
         }
@@ -279,15 +271,16 @@ namespace Metronome
             if (beat.Contains('/'))
             {
                 long n = Convert.ToInt64(beat.Split('/').First());
-                Denominator = Convert.ToInt32(beat.Split('/').Last());
+                int Denominator = Convert.ToInt32(beat.Split('/').Last());
                 Whole = n / Denominator;
-                Numerator = (int) (n % Denominator);
+                int Numerator = (int) (n % Denominator);
+                R = (float)Numerator / Denominator;
             }
             else
             {
                 // no fraction
                 Whole = Convert.ToInt64(beat);
-                Numerator = Denominator = 0;
+                //Numerator = Denominator = 0;
             }
         }
     }
