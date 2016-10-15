@@ -12,6 +12,7 @@ using NAudio;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using System.Runtime.InteropServices;
+using NAudio.CoreAudioApi;
 
 /**
  * Layer class will have a method for parsing fraction components
@@ -22,8 +23,24 @@ namespace Metronome
 {
     class Program
     {
+        
+
         static void Main(string[] args)
         {
+            //WasapiOut test = new WasapiOut(AudioClientShareMode.Exclusive, 1);
+            //IWaveProvider pro = new WaveFileReader();
+            //test.Init(new );
+            //test.Play();
+
+            //IWavePlayer wavePlayer = new WasapiOut(AudioClientShareMode.Shared, true, 30);
+            //AudioFileReader audioFile = new AudioFileReader("snare_xstick_v16.wav");
+            //audioFile.Volume = 1.0f;
+            //wavePlayer.Init(audioFile);
+            //wavePlayer.Play();
+            //Thread.Sleep(1000);
+            //audioFile.Position = 0;
+            //wavePlayer.Play();
+
             var ride = new WaveAudioSource("ride_center_v8.wav");
             var stick = new WaveAudioSource("snare_xstick_v16.wav");
             var hihat = new WaveAudioSource("hihat_pedal_v5.wav");
@@ -37,22 +54,22 @@ namespace Metronome
             var layer2 = new Layer(stick);
             layer2.SetBeat(new TimeInterval[]
             {
-                new TimeInterval("800")
+                new TimeInterval("4000/8"), new TimeInterval("1000/3"), new TimeInterval("1000/3")
             });
             
             var layer3 = new Layer(hihat);
             layer3.SetBeat(new TimeInterval[]
             {
-                new TimeInterval("4000/7")
+                new TimeInterval("4000/3")
             });
             
             Metronome metronome = Metronome.GetInstance();
             metronome.AddLayer(layer1);
             metronome.AddLayer(layer2);
-            metronome.AddLayer(layer3);
-
+            //metronome.AddLayer(layer3);
+            
             Thread.Sleep(2000);
-
+            
             metronome.Start();
             Console.ReadKey();
             metronome.Stop();
@@ -61,7 +78,7 @@ namespace Metronome
             stick.Dispose();
             hihat.Dispose();
 
-            
+
         }
     }
 
@@ -79,6 +96,7 @@ namespace Metronome
         private Metronome()
         {
             MetTimer.Interval = 1;
+            MetTimer.Resolution = 0;
             MetTimer.Elapsed += Tick;
         }
 
@@ -170,11 +188,13 @@ namespace Metronome
 
     class WaveAudioSource : AudioSource
     {
-        protected const int Count = 5;
-        
-        protected Stream[] Files = new Stream[Count]; // keep spare streams on hand for concurent plays
-        protected WaveFileReader[] Readers = new WaveFileReader[Count];
-        protected DirectSoundOut[] Outputs = new DirectSoundOut[Count];
+        protected const int Count = 1;
+
+        //protected Stream[] Files = new Stream[Count]; // keep spare streams on hand for concurent plays
+        //protected WaveFileReader[] Readers = new WaveFileReader[Count];
+        //protected DirectSoundOut[] Outputs = new DirectSoundOut[Count];
+        protected AudioFileReader[] Files = new AudioFileReader[Count];
+        protected WasapiOut[] Players = new WasapiOut[Count];
 
         protected int Current = 0;
 
@@ -182,29 +202,39 @@ namespace Metronome
         {
             for (int i=0; i<Count; i++)
             {
+                Files[i] = new AudioFileReader(source);
+                Players[i] = new WasapiOut(AudioClientShareMode.Shared, true, 7000);
+                Files[i].Volume = 1.0f;
+                Players[i].Init(Files[i]);
+
+
                 // init
-                Files[i] = File.OpenRead(source);
-                Readers[i] = new WaveFileReader(Files[i]);
-                Outputs[i] = new DirectSoundOut();
-                Outputs[i].Init(new WaveChannel32(Readers[i]));
+                //Files[i] = File.OpenRead(source);
+                //Readers[i] = new WaveFileReader(Files[i]);
+                //Outputs[i] = new DirectSoundOut(37);
+                //Outputs[i].Init(new WaveChannel32(Readers[i]));
+                //Outputs[i].Play();
             }
         }
 
         override public void Play()
         {
-            Readers[Current].Position = 0;
-            //int c = Current;
-            //Task.Run(() => Outputs[c].Play());
-            Outputs[Current].Play();
+            Files[Current].Position = 0;
+            Players[Current].Play();
+
+            //Readers[Current].Position = 0;
+            ////int c = Current;
+            ////Task.Run(() => Outputs[c].Play());
+            ////Outputs[Current].Play();
             Current++;
             if (Current == Count) Current = 0;
         }
 
         public void Stop()
         {
-            foreach(DirectSoundOut output in Outputs)
+            foreach(IWavePlayer player in Players)
             {
-                output.Stop();
+                player.Stop();
             }
         }
 
@@ -213,19 +243,18 @@ namespace Metronome
             for (int i=0; i<Count; i++)
             {
                 Files[i].Dispose();
-                Readers[i].Dispose();
-                Outputs[i].Dispose();
+                Players[i].Dispose();
             }
         }
     }
 
 
-    struct TimeInterval
+    class TimeInterval
     {
         private long Whole;
         private int Numerator;
         private int Denominator;
-        private int I; // for iterating over denominator
+        private int I = 0; // for iterating over denominator
 
         public long Milliseconds
         {
@@ -233,9 +262,10 @@ namespace Metronome
             {
                 if (Numerator > 0)
                 {
-                    if (I++ == Denominator)
+                    I++;
+                    if (I == Denominator)
                     {
-                        I = 1;
+                        I = 0;
                         return Whole + Numerator;
                     }
                 }
@@ -245,7 +275,6 @@ namespace Metronome
 
         public TimeInterval(string beat) // number of ms, ex. "1000/3"
         {
-            I = 1;
             // check if fractional
             if (beat.Contains('/'))
             {
@@ -253,8 +282,6 @@ namespace Metronome
                 Denominator = Convert.ToInt32(beat.Split('/').Last());
                 Whole = n / Denominator;
                 Numerator = (int) (n % Denominator);
-                Console.WriteLine(Numerator);
-                Console.WriteLine(Denominator);
             }
             else
             {
