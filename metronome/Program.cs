@@ -14,10 +14,6 @@ using NAudio.Wave.SampleProviders;
 using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
 
-/**
- * Layer class will have a method for parsing fraction components
- * every {denominator} add {numerator} miliseconds
- */
 
 namespace Metronome
 {
@@ -25,47 +21,51 @@ namespace Metronome
     {
         static void Main(string[] args)
         {
-            var ride = new WaveAudioSource("ride_center_v8.wav");
-            var stick = new WaveAudioSource("snare_xstick_v16.wav");
-            var hihat = new WaveAudioSource("hihat_pedal_v5.wav");
-            
-            var layer1 = new Layer(ride);
-            layer1.SetBeat(new TimeInterval[]
+            var layer1 = new Layer(new BeatCell[]
             {
-                new TimeInterval("4000/7")
-            });
+                new BeatCell("4000/4")
+            }, "a4");
+            layer1.Volume = .3f;
             
-            var layer2 = new Layer(stick);
-            layer2.SetBeat(new TimeInterval[]
+            var layer2 = new Layer(new BeatCell[]
             {
-                new TimeInterval("4000/5")//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
-            });
+                new BeatCell("4000/5")//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
+            }, "c#4");
             
-            var layer3 = new Layer(hihat);
-            layer3.SetBeat(new TimeInterval[]
+            var layer3 = new Layer(new BeatCell[]
             {
-                new TimeInterval("4000/3")
-            });
-            
+                new BeatCell("4000/3")
+            }, "snare_xstick_v3");
+
+            var layer4 = new Layer(new BeatCell[]
+            {
+                new BeatCell("4000/11")
+            }, "G5");
+
             Metronome metronome = Metronome.GetInstance();
             metronome.AddLayer(layer1);
             metronome.AddLayer(layer2);
             metronome.AddLayer(layer3);
+            metronome.AddLayer(layer4);
             
             Thread.Sleep(2000);
-            
+
+            //var p = new PitchSource("a4");
+            //p.Play(.6f);
+            //Thread.Sleep(800);
+            //p.Stop();
+            //p.Play(.6f);
+
             metronome.Start();
             Console.ReadKey();
             metronome.Stop();
-            
-            ride.Dispose();
-            stick.Dispose();
-            hihat.Dispose();
+
+            metronome.Dispose();
         }
     }
 
 
-    class Metronome
+    class Metronome : IDisposable
     {
         protected MultimediaTimer MetTimer = new MultimediaTimer();
         protected long ElapsedMilliseconds = 0;
@@ -117,50 +117,106 @@ namespace Metronome
             //foreach (Layer layer in ls) Task.Run(() => layer.Play());
             if (ls.Any())
             {
-                Console.WriteLine(ls.Count());
-                new Thread(() => { foreach (Layer layer in ls) layer.Play(); }).Start();
+                //Console.WriteLine(ls.Count());
+                new Thread(() => {
+                    foreach (Layer layer in ls) {
+                        int index = layer.CurrentBeatIndex;
+                        layer.PlayBeat(index);
+                    }
+                }).Start();
                 foreach (Layer layer in ls) layer.Progress();
             }
 
             ElapsedMilliseconds++;
         }
+
+        public void Dispose()
+        {
+            Layers.ForEach((x) => x.Dispose());
+        }
     }
 
 
-    class Layer
+    class Layer : IDisposable
     {
-        protected List<TimeInterval> Beat = new List<TimeInterval>();
+        protected List<BeatCell> Beat = new List<BeatCell>();
         //protected List<long> BeatForecast = new List<long>();
 
-        protected AudioSource AudioSource;
+        protected Dictionary<string, AudioSource> AudioSources = new Dictionary<string, AudioSource>();
+        protected AudioSource BaseAudioSource;
 
         public float Remainder = 0F; // holds the accumulating fractional milliseconds.
-
-        public Layer(AudioSource audioSource)
-        {
-            AudioSource = audioSource;
-        }
-
-        public void SetBeat(TimeInterval[] beat)
-        {
-            for (int i = 0; i < beat.Count(); i++) beat[i].Layer = this;
-            Beat = beat.ToList();
-            //BeatForecast = beat.ToList();
-        }
-
         public long NextNote = 0;
-        protected int BeatIndex = 0;
+        public int CurrentBeatIndex = 0;
+
+        public Layer(BeatCell[] beat, string baseSourceName)
+        {
+            // is sample or pitch source?
+            if (baseSourceName.Count() <= 5)
+                BaseAudioSource = new PitchSource(baseSourceName);
+            else
+                BaseAudioSource = WavAudioSource.GetByName(baseSourceName);
+            SetBeat(beat);
+            Volume = .6f;
+        }
+
+        public void SetBeat(BeatCell[] beat)
+        {
+            List<string> sources = new List<string>();
+
+            for (int i = 0; i < beat.Count(); i++)
+            {
+                beat[i].Layer = this;
+                if (beat[i].SourceName != string.Empty)
+                {
+                    sources.Add(beat[i].SourceName);
+                }
+            }
+            // instantiate each source
+            foreach (string src in sources.Distinct())
+            {
+                AudioSources.Add(src, WavAudioSource.GetByName(src));
+            }
+            // assign sources to beat cells
+            for (int i = 0; i < beat.Count(); i++)
+            {
+                if (beat[i].SourceName == string.Empty) beat[i].AudioSource = BaseAudioSource;
+                else beat[i].AudioSource = AudioSources[beat[i].SourceName];
+            }
+
+            Beat = beat.ToList();
+        }
+
+        public void PlayBeat(int index)
+        {
+            Beat[index].AudioSource.Play(Volume);
+        }
+
+        public void PlayCurrentBeat()
+        {
+            Beat[CurrentBeatIndex].AudioSource.Play(Volume);
+        }
 
         public void Progress()
         {
-            NextNote += Beat[BeatIndex++].Milliseconds;
-            if (BeatIndex == Beat.Count) BeatIndex = 0;
+            NextNote += Beat[CurrentBeatIndex++].Milliseconds;
+            if (CurrentBeatIndex == Beat.Count) CurrentBeatIndex = 0;
         }
 
-        public void Play()
+        public float Volume
         {
-            AudioSource.Play();
-            //Progress();
+            get;
+            set;
+        }
+
+        public void Dispose()
+        {
+            foreach(AudioSource src in AudioSources.Values)
+            {
+                src.Dispose();
+            }
+
+            BaseAudioSource.Dispose();
         }
     }
     
@@ -168,81 +224,168 @@ namespace Metronome
     abstract class AudioSource : IDisposable
     {
         public abstract void Play();
+        public abstract void Play(float volume);
         public abstract void Dispose();
     }
 
 
-    class WaveAudioSource : AudioSource
+    class CustomReader : AudioFileReader
     {
-        protected const int Count = 1;
+        protected bool isCached = false;
+        protected byte[] bufferCache;
 
-        //protected Stream[] Files = new Stream[Count]; // keep spare streams on hand for concurent plays
-        //protected WaveFileReader[] Readers = new WaveFileReader[Count];
-        //protected DirectSoundOut[] Outputs = new DirectSoundOut[Count];
-        protected AudioFileReader[] Files = new AudioFileReader[Count];
-        protected WasapiOut[] Players = new WasapiOut[Count];
-
-        protected int Current = 0;
-
-        public WaveAudioSource(string source)
+        public CustomReader(string fileName) : base(fileName)
         {
-            for (int i=0; i<Count; i++)
-            {
-                Files[i] = new AudioFileReader(source);
-                Players[i] = new WasapiOut(AudioClientShareMode.Shared, true, 7000);
-                Files[i].Volume = 1.0f;
-                Players[i].Init(Files[i]);
 
-
-                // init
-                //Files[i] = File.OpenRead(source);
-                //Readers[i] = new WaveFileReader(Files[i]);
-                //Outputs[i] = new DirectSoundOut(37);
-                //Outputs[i].Init(new WaveChannel32(Readers[i]));
-                //Outputs[i].Play();
-            }
         }
 
-        override public void Play()
+        public override int Read(byte[] buffer, int offset, int count)
         {
-            Files[Current].Position = 0;
-            Players[Current].Play();
-
-            //Readers[Current].Position = 0;
-            ////int c = Current;
-            ////Task.Run(() => Outputs[c].Play());
-            ////Outputs[Current].Play();
-            Current++;
-            if (Current == Count) Current = 0;
-        }
-
-        public void Stop()
-        {
-            foreach(IWavePlayer player in Players)
+            if (isCached)
             {
-                player.Stop();
+                
+                //return count;
             }
-        }
 
-        override public void Dispose()
-        {
-            for (int i=0; i<Count; i++)
+            int result = base.Read(buffer, offset, count);
+            if (result == 0)
             {
-                Files[i].Dispose();
-                Players[i].Dispose();
+                isCached = true;
+                //bufferCache = buffer.Clone() as byte[];
+                //bufferCache = bufferCache;
             }
+            return result;
         }
     }
 
 
-    class TimeInterval
+    class WavAudioSource : AudioSource
+    {
+        protected CustomReader File;
+        protected WasapiOut Player;
+
+        public WavAudioSource(string source)
+        {
+            File = new CustomReader(source);
+            Player = new WasapiOut(AudioClientShareMode.Shared, true, 7000);
+            File.Volume = 1.0F;
+            Player.Init(File);
+        }
+
+        static public WavAudioSource GetByName(string name)
+        {
+            return new WavAudioSource(WavSources[name]);
+        }
+
+        override public void Play(float volume)
+        {
+            File.Volume = volume;
+            Play();
+        }
+
+        override public void Play()
+        {
+            File.Position = 0;
+            Player.Play();
+        }
+
+        public void Stop()
+        {
+            Player.Stop();
+        }
+
+        override public void Dispose()
+        {
+            File.Dispose();
+            Player.Dispose();
+        }
+
+        public static Dictionary<string, string> WavSources = new Dictionary<string, string>
+        {
+            { "snare_xstick_v3", "snare_xstick_v16.wav" },
+            { "ride_center_v2", "ride_center_v8.wav" },
+            { "hihat_pedal_v2", "hihat_pedal_v5.wav" }
+        };
+    }
+
+
+    class PitchSource : AudioSource
+    {
+        protected SineWaveProvider32 SineWave;
+        protected WaveOut Player;
+
+        public PitchSource(string noteSymbol)
+        {
+            SetPitch(noteSymbol);
+            SineWave = new SineWaveProvider32();
+            SineWave.Frequency = Pitch;
+            Player = new WaveOut();
+            Player.Init(SineWave);
+        }
+
+        public float Pitch
+        {
+            get;
+            set;
+        }
+
+        public void SetPitch(string symbol)
+        {
+            string note = new string(symbol.TakeWhile((x) => !char.IsNumber(x)).ToArray()).ToLower();
+            if (note == string.Empty) // raw pitch value
+            {
+                Pitch = Convert.ToSingle(symbol);
+                return;
+            }
+            string o = new string(symbol.SkipWhile((x) => !char.IsNumber(x)).ToArray());
+            int octave;
+            if (o != string.Empty) octave = Convert.ToInt32(o) - 5;
+            else octave = 4;
+
+            float index = Notes[note];
+            index += octave * 12;
+            Pitch = (float)(440 * Math.Pow(2, index / 12));
+        }
+
+        protected static Dictionary<string, int> Notes = new Dictionary<string, int>
+        {
+            { "a", 12 }, { "a#", 13 }, { "bb", 13 }, { "b", 14 }, { "c", 3 },
+            { "c#", 4 }, { "db", 4 }, { "d", 5 }, { "d#", 6 }, { "eb", 6 },
+            { "e", 7 }, { "f", 8 }, { "f#", 9 }, { "gb", 9 }, { "g", 10 },
+            { "g#", 11 }, { "ab", 11 }
+        };
+
+        public void Stop()
+        {
+            Player.Stop();
+        }
+
+        public override void Play()
+        {
+            Player.Play();
+        }
+
+        override public void Play(float volume)
+        {
+            SineWave.sample = 0;
+            SineWave.Amplitude = volume;
+            Play();
+        }
+
+        override public void Dispose()
+        {
+            Player.Dispose();
+        }
+    }
+    
+
+    class BeatCell
     {
         protected long Whole;
-        protected float R; // fractional portion
+        protected float R = .0F; // fractional portion
+        public string SourceName;
         public Layer Layer;
-        //private int Numerator;
-        //private int Denominator;
-        //private int I = 0; // for iterating over denominator
+        public AudioSource AudioSource;
 
         public long Milliseconds
         {
@@ -252,21 +395,15 @@ namespace Metronome
                 if (Layer.Remainder >= 1)
                 {
                     Layer.Remainder -= 1;
-                    
-                    //I++;
-                    //if (I == Denominator)
-                    //{
-                    //    I = 0;
                     return Whole + 1;
-                    //}
                 }
-                //Ra += R;
                 return Whole;
             }
         }
 
-        public TimeInterval(string beat) // number of ms, ex. "1000/3"
+        public BeatCell(string beat, string sourceName = "") // number of ms, ex. "1000/3"
         {
+            SourceName = sourceName;
             // check if fractional
             if (beat.Contains('/'))
             {
@@ -280,8 +417,79 @@ namespace Metronome
             {
                 // no fraction
                 Whole = Convert.ToInt64(beat);
-                //Numerator = Denominator = 0;
             }
+        }
+    }
+
+
+    class SineWaveProvider32 : WaveProvider32
+    {
+        public int sample;
+
+        public float Frequency { get; set; }
+        float amplitude;
+        public float Amplitude {
+            get
+            {
+                return amplitude;
+            }
+            set
+            {
+                decay = value * .000133f;
+                amplitude = value;
+            }
+        }
+
+        protected float[] bufferCache = new float[26460/4];
+        protected bool isCached = false;
+        protected bool ca = false;
+        protected int length;
+        protected float decay;
+
+        public SineWaveProvider32()
+        {
+            Frequency = 1000;
+            Amplitude = 0.6f;
+        }
+
+        public override int Read(float[] buffer, int offset, int sampleCount)
+        {
+            if (Amplitude <= 0)
+            {
+                isCached = true;
+                return 0;
+            }
+            if (isCached)
+            {
+                if (ca)
+                {
+                    ca = false;
+                    return 0;
+                }
+
+                ca = true;
+                return sampleCount;
+            }
+
+            int sampleRate = WaveFormat.SampleRate;
+            for (int i=0; i<sampleCount; i++)
+            {
+
+                Amplitude -= .00008f; //quick fade
+                if (Amplitude <= 0)
+                {
+                    isCached = true;
+                    length = offset + i;
+                    return i;
+                }
+
+                bufferCache[i + offset/4] = buffer[i + offset] = (float)(Amplitude * Math.Sin((2 * Math.PI * sample * Frequency) / sampleRate));
+                sample++;
+
+                if (sample >= (int)(sampleRate/Frequency)) sample = 0;
+
+            }
+            return sampleCount;
         }
     }
 
