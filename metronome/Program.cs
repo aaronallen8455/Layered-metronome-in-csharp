@@ -19,42 +19,49 @@ namespace Metronome
         static void Main(string[] args)
         {
             Metronome metronome = Metronome.GetInstance();
-            metronome.Tempo = 93.3f;
+            metronome.Tempo = 60f;
 
             var layer1 = new Layer(new BeatCell[]
             {
-                new BeatCell(1f)
-            }, "a4");
+                new BeatCell(2d)
+            }, "hihat_pedal_v5.wav");
             layer1.Volume = .6f;
             layer1.Pan = 1;
+            layer1.SetOffset(1d);
             
-            var layer2 = new Layer(new BeatCell[]
-            {
-                new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
-            }, "c#4");
+            //var layer2 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
+            //}, "c#4");
 
             var layer3 = new Layer(new BeatCell[]
             {
-                new BeatCell(4/3f)//, new BeatCell(2/3f), new BeatCell(1/3f)
+                new BeatCell(2/3d)//, new BeatCell(2/3f), new BeatCell(1/3f)
             }, "snare_xstick_v16.wav");
-            
+            layer3.SetOffset(1 / 3d);
+
             var layer4 = new Layer(new BeatCell[]
             {
-                new BeatCell(4/11f)
-            }, "G5");
+                new BeatCell(1f), new BeatCell(2/3f), new BeatCell(1/3f)
+            }, "ride_center_v8.wav");
             
-            var layer5 = new Layer(new BeatCell[]
-            {
-                new BeatCell(4/17f)
-            }, "C5");
-            layer5.Volume = .1f;
-            layer5.Pan = -1;
+            //var layer4 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(4/11f)
+            //}, "G5");
+            //
+            //var layer5 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(4/17f)
+            //}, "C5");
+            //layer5.Volume = .1f;
+            //layer5.Pan = -1;
 
             metronome.AddLayer(layer1);
-            metronome.AddLayer(layer2);
+            //metronome.AddLayer(layer2);
             metronome.AddLayer(layer3);
             metronome.AddLayer(layer4);
-            metronome.AddLayer(layer5);
+            //metronome.AddLayer(layer5);
             
             Thread.Sleep(2000);
 
@@ -166,24 +173,38 @@ namespace Metronome
             {
                 BasePitchSource = new PitchStream();
                 BasePitchSource.SetFrequency(baseSourceName);
+                BasePitchSource.Layer = this;
                 BaseAudioSource = BasePitchSource; // needs to be cast back to ISampleProvider when added to mixer
                 IsPitch = true;
             }
             else
             {
                 BaseAudioSource = new WavFileStream(baseSourceName);
+                BaseAudioSource.Layer = this;
                 IsPitch = false;
             }
             //BasePitchSource.Layer = this;
         }
 
-        public void SetOffset(float offset)
+        public void SetOffset(double offset)
         {
             foreach (IStreamProvider src in AudioSources.Values)
             {
                 double current = src.GetOffset();
                 double add = BeatCell.ConvertFromBpm(offset, src);
                 src.SetOffset(current + add);
+            }
+
+            // set for pitch / base source
+            double current2 = BaseAudioSource.GetOffset();
+            double add2 = BeatCell.ConvertFromBpm(offset, BaseAudioSource);
+            BaseAudioSource.SetOffset(current2 + add2);
+
+            if (BasePitchSource != default(PitchStream))
+            {
+                double current3 = BasePitchSource.GetOffset();
+                double add3 = BeatCell.ConvertFromBpm(offset, BasePitchSource);
+                BasePitchSource.SetOffset(current3 + add3);
             }
         }
 
@@ -211,6 +232,7 @@ namespace Metronome
                         {
                             BasePitchSource = new PitchStream();
                             BasePitchSource.SetFrequency(beat[i].SourceName);
+                            BasePitchSource.Layer = this;
                         }
                         beat[i].AudioSource = BasePitchSource;
                     }
@@ -475,7 +497,7 @@ namespace Metronome
 
         public void SetOffset(double value)
         {
-            InitialOffset = (int)value;
+            InitialOffset = (int)(value/2);
             OffsetRemainder = value - InitialOffset;
             hasOffset = true;
         }
@@ -486,7 +508,7 @@ namespace Metronome
         }
 
         protected int InitialOffset = 0; // time to wait before reading source.
-        protected double OffsetRemainder = 0f;
+        protected double OffsetRemainder = 0;
         protected bool hasOffset = false;
 
         protected int ByteInterval;
@@ -501,13 +523,13 @@ namespace Metronome
             for (int sampleCount = 0; sampleCount < count / waveFormat.Channels; sampleCount++)
             {
                 // account for offset
-                if (hasOffset && InitialOffset > 0)
+                if (hasOffset)
                 {
                     for (int i=0; i<waveFormat.Channels; i++)
                     {
                         buffer[outIndex++] = 0;
                     }
-                    InitialOffset--;
+                    InitialOffset -= 1;
                     if (InitialOffset == 0)
                     {
                         hasOffset = false;
@@ -558,7 +580,7 @@ namespace Metronome
 
     public class WavFileStream : WaveStream, IStreamProvider
     {
-        WaveStream sourceStream;
+        WaveFileReader sourceStream;
 
         public WaveChannel32 Channel { get; set; }
 
@@ -579,7 +601,9 @@ namespace Metronome
             Channel = new WaveChannel32(this);
             BytesPerSec = sourceStream.WaveFormat.AverageBytesPerSecond;
 
-            cache = File.ReadAllBytes(fileName).ToArray();
+            MemoryStream ms = new MemoryStream();
+            sourceStream.CopyTo(ms);
+            cache = ms.GetBuffer();
         }
 
         public double Volume
@@ -620,8 +644,8 @@ namespace Metronome
 
         public void SetOffset(double value)
         {
-            initialOffset = (int)value;
-            offsetRemainder = value = initialOffset;
+            initialOffset = (int)(value * 4);
+            offsetRemainder = value - initialOffset;
             hasOffset = true;
         }
 
@@ -643,6 +667,19 @@ namespace Metronome
 
             while (bytesCopied < count)
             {
+                if (hasOffset)
+                {
+                    int subtract = initialOffset > count - bytesCopied ? count - bytesCopied : initialOffset;
+                    initialOffset -= subtract;
+                    bytesCopied += subtract;
+
+                    if (initialOffset == 0)
+                    {
+                        Layer.Remainder += offsetRemainder;
+                        hasOffset = false;
+                    }
+                }
+
                 if (ByteInterval == 0)
                 {
                     NextInterval();
@@ -731,7 +768,6 @@ namespace Metronome
 
         WaveFormat WaveFormat { get; }
 
-        //WaveStream Channel { get; set; }
     }
 
 
@@ -747,7 +783,7 @@ namespace Metronome
             Layer = layer;
             Beats = beats.Select((x) => BeatCell.ConvertFromBpm(x, src)).ToArray();
             Enumerator = GetEnumerator();
-            if (src.WaveFormat.AverageBytesPerSecond == 64000) isWav = true;
+            isWav = src.WaveFormat.AverageBytesPerSecond == 64000;
         }
 
         public IEnumerator<int> GetEnumerator()
@@ -759,7 +795,6 @@ namespace Metronome
                 double bpm = Beats[i];//BeatCell.ConvertFromBpm(Beats[i], BytesPerSec);
 
                 int whole = (int)bpm;
-                //int whole = (int)Beats[i];
                 
                 Layer.Remainder += bpm - whole; // add to layer's remainder accumulator
                 
