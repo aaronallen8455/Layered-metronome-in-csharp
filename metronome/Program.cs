@@ -19,42 +19,42 @@ namespace Metronome
         static void Main(string[] args)
         {
             Metronome metronome = Metronome.GetInstance();
-            metronome.Tempo = 93f;
+            metronome.Tempo = 93.3f;
 
             var layer1 = new Layer(new BeatCell[]
             {
-                new BeatCell(4/3f)
+                new BeatCell(1f)
             }, "a4");
             layer1.Volume = .6f;
-            //layer1.Pan = 1;
+            layer1.Pan = 1;
             
-            //var layer2 = new Layer(new BeatCell[]
-            //{
-            //    new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
-            //}, "c#4");
+            var layer2 = new Layer(new BeatCell[]
+            {
+                new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
+            }, "c#4");
 
             var layer3 = new Layer(new BeatCell[]
             {
                 new BeatCell(4/3f)//, new BeatCell(2/3f), new BeatCell(1/3f)
             }, "snare_xstick_v16.wav");
             
-            //var layer4 = new Layer(new BeatCell[]
-            //{
-            //    new BeatCell(4/11f)
-            //}, "G5");
-            //
-            //var layer5 = new Layer(new BeatCell[]
-            //{
-            //    new BeatCell(4/17f)
-            //}, "C5");
-            //layer5.Volume = .1f;
-            //layer5.Pan = -1;
+            var layer4 = new Layer(new BeatCell[]
+            {
+                new BeatCell(4/11f)
+            }, "G5");
+            
+            var layer5 = new Layer(new BeatCell[]
+            {
+                new BeatCell(4/17f)
+            }, "C5");
+            layer5.Volume = .1f;
+            layer5.Pan = -1;
 
             metronome.AddLayer(layer1);
-            //metronome.AddLayer(layer2);
+            metronome.AddLayer(layer2);
             metronome.AddLayer(layer3);
-            //metronome.AddLayer(layer4);
-            //metronome.AddLayer(layer5);
+            metronome.AddLayer(layer4);
+            metronome.AddLayer(layer5);
             
             Thread.Sleep(2000);
 
@@ -355,7 +355,6 @@ namespace Metronome
         static public double ConvertFromBpm(double bpm, IStreamProvider src)
         {
             double result = bpm * (60d / Metronome.GetInstance().Tempo) * src.WaveFormat.SampleRate;
-            if (src.WaveFormat.AverageBytesPerSecond == 64000) result *= 4;
             return result;
         }
 
@@ -560,7 +559,6 @@ namespace Metronome
     public class WavFileStream : WaveStream, IStreamProvider
     {
         WaveStream sourceStream;
-        MemoryStream Ms;
 
         public WaveChannel32 Channel { get; set; }
 
@@ -577,15 +575,11 @@ namespace Metronome
 
         public WavFileStream(string fileName)
         {
-            sourceStream = new WaveFileReader(fileName); //todo: use memory stream instead of file?
+            sourceStream = new WaveFileReader(fileName);
             Channel = new WaveChannel32(this);
             BytesPerSec = sourceStream.WaveFormat.AverageBytesPerSecond;
 
             cache = File.ReadAllBytes(fileName).ToArray();
-            Ms = new MemoryStream(cache);
-            //byte[] b = new byte[Ms.Length];
-            //Ms.Read(b, 0, b.Length);
-            //Ms.Position = 0;
         }
 
         public double Volume
@@ -640,8 +634,6 @@ namespace Metronome
         protected double offsetRemainder = 0f;
         protected bool hasOffset = false;
 
-        int leftOver = 0;
-
         public int ByteInterval;
 
         public override int Read(byte[] buffer, int offset, int count)
@@ -657,7 +649,7 @@ namespace Metronome
                     cacheIndex = 0;
                 }
 
-                if (cacheIndex < cacheSize)
+                if (cacheIndex < cacheSize) // play from the sample
                 {
                     // have to keep 4 byte alignment throughout
                     int offsetMod = (offset + bytesCopied) % 4;
@@ -700,10 +692,9 @@ namespace Metronome
                         ByteInterval -= chunkSize;
                     }
                 }
-                else
+                else // silence
                 {
                     int smallest = Math.Min(ByteInterval, count - bytesCopied);
-                    //int smallest = new int[] { ByteInterval, count - bytesCopied }.Min();
 
                     ByteInterval -= smallest;
                     bytesCopied += smallest;
@@ -711,112 +702,6 @@ namespace Metronome
             }
             return count;
         }
-
-        //public override int Read(byte[] buffer, int offset, int count)
-        //{
-        //    int totalBytesRead = 0;
-        //
-        //    while (totalBytesRead < count)
-        //    {
-        //        // account for offset
-        //        //if (hasOffset && initialOffset != 0)
-        //        //{
-        //        //    int size = Math.Min(count, initialOffset);
-        //        //    for (int i=0; i<size; i++)
-        //        //    {
-        //        //        buffer[offset + totalBytesRead + i] = 0;
-        //        //    }
-        //        //    initialOffset -= size;
-        //        //    totalBytesRead += size;
-        //        //
-        //        //    if (initialOffset == 0)
-        //        //    {
-        //        //        Layer.Remainder += offsetRemainder;
-        //        //        hasOffset = false;
-        //        //    }
-        //        //    else
-        //        //        continue;
-        //        //
-        //        //    if (totalBytesRead == count) break;
-        //        //}
-        //
-        //        int limit;
-        //        //int leftOver = 0;
-        //        if (leftOver > 0)
-        //        {
-        //            ByteInterval += leftOver;
-        //            leftOver = 0;
-        //        }
-        //
-        //        if (ByteInterval < count - totalBytesRead) // bytes are aligned in 4
-        //        {
-        //            leftOver += ByteInterval % 4; // save the leftovers
-        //            ByteInterval -= leftOver;
-        //
-        //            if (buffer.Count() - totalBytesRead < ByteInterval)
-        //            {
-        //                //leftOver += ByteInterval - totalBytesRead;
-        //                //ByteInterval = totalBytesRead;
-        //                limit = buffer.Count() - totalBytesRead;
-        //            }
-        //            else limit = ByteInterval;
-        //        }
-        //        else limit = count - totalBytesRead;
-        //
-        //        //int limit = Math.Min(count, ByteInterval);
-        //        // read file for complete count, or if the file is longer than interval, just read for interval.
-        //        int bytesRead = Ms.Read(buffer, offset + totalBytesRead, limit);
-        //        //Array.Copy(cache, buffer, 2560);
-        //        //Array.Copy()
-        //        //int bytesRead = 0;
-        //        bool eof = bytesRead == 0; // end of file was reached
-        //
-        //        ByteInterval -= bytesRead;
-        //
-        //        // fill left-overs with zeros
-        //        //if (leftOver > 0 && eof)
-        //        //{
-        //        //        //for (int i=0; i< leftOver; i++)
-        //        //        //{
-        //        //        //    buffer[offset + totalBytesRead + bytesRead + i] = 0;
-        //        //        //}
-        //        //    //bytesRead += leftOver;
-        //        //}
-        //
-        //        // is end of interval?
-        //        if (ByteInterval == 0)
-        //        {
-        //            //sourceStream.Position = 0;
-        //            Ms.Position = 0;
-        //            NextInterval();
-        //        }
-        //        // we hit the end of the file, fill remaining spots with null
-        //        limit = Math.Min(count, ByteInterval);
-        //        if (bytesRead < count && eof)
-        //        {
-        //            // fill with zeros
-        //            //for (int i = 0; i < limit - bytesRead - totalBytesRead; i++)
-        //            //{
-        //            //    buffer[offset + totalBytesRead + bytesRead + i] = 0;
-        //            //    ByteInterval--;
-        //            //}
-        //            //
-        //            ByteInterval -= limit - bytesRead - totalBytesRead;
-        //            //
-        //            bytesRead += limit - bytesRead;
-        //
-        //            if (ByteInterval == 0)
-        //            {
-        //                NextInterval();
-        //                //sourceStream.Position = 0;
-        //                Ms.Position = 0;
-        //            }
-        //        }
-        //
-        //        totalBytesRead += bytesRead;
-        //    }
-        //    return count;
-        //}
     }
 
 
@@ -855,12 +740,14 @@ namespace Metronome
         Layer Layer;
         double[] Beats;
         public IEnumerator<int> Enumerator;
+        bool isWav;
 
         public SourceBeatCollection(Layer layer, double[] beats, IStreamProvider src)
         {
             Layer = layer;
             Beats = beats.Select((x) => BeatCell.ConvertFromBpm(x, src)).ToArray();
             Enumerator = GetEnumerator();
+            if (src.WaveFormat.AverageBytesPerSecond == 64000) isWav = true;
         }
 
         public IEnumerator<int> GetEnumerator()
@@ -874,13 +761,15 @@ namespace Metronome
                 int whole = (int)bpm;
                 //int whole = (int)Beats[i];
                 
-                Layer.Remainder += bpm - whole;
+                Layer.Remainder += bpm - whole; // add to layer's remainder accumulator
                 
                 if (Layer.Remainder >= 1) // fractional value exceeds 1, add it to whole
                 {
                     whole++;
                     Layer.Remainder -= 1;
                 }
+
+                if (isWav) whole *= 4; // multiply for wav files. 4 bytes per sample
         
                 yield return whole;
             }
