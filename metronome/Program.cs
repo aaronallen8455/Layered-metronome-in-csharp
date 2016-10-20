@@ -28,40 +28,40 @@ namespace Metronome
             layer1.Volume = .6f;
             layer1.Pan = 1;
             
-            var layer2 = new Layer(new BeatCell[]
-            {
-                new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
-            }, "c#4");
+            //var layer2 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
+            //}, "c#4");
 
             var layer3 = new Layer(new BeatCell[]
             {
                 new BeatCell(4/3f)//, new BeatCell(2/3f), new BeatCell(1/3f)
             }, "snare_xstick_v16.wav");
             
-            var layer4 = new Layer(new BeatCell[]
-            {
-                new BeatCell(4/11f)
-            }, "G5");
-            
-            var layer5 = new Layer(new BeatCell[]
-            {
-                new BeatCell(4/17f)
-            }, "C5");
-            layer5.Volume = .1f;
-            layer5.Pan = -1;
+            //var layer4 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(4/11f)
+            //}, "G5");
+            //
+            //var layer5 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(4/17f)
+            //}, "C5");
+            //layer5.Volume = .1f;
+            //layer5.Pan = -1;
 
             metronome.AddLayer(layer1);
-            metronome.AddLayer(layer2);
+            //metronome.AddLayer(layer2);
             metronome.AddLayer(layer3);
-            metronome.AddLayer(layer4);
-            metronome.AddLayer(layer5);
+            //metronome.AddLayer(layer4);
+            //metronome.AddLayer(layer5);
             
             Thread.Sleep(2000);
 
             metronome.Start();
             Console.ReadKey();
             metronome.Stop();
-
+            Console.ReadKey();
             metronome.Dispose();
         }
     }
@@ -147,7 +147,7 @@ namespace Metronome
         public PitchStream BasePitchSource; // only use one pitch source per layer
         public bool IsPitch;
 
-        public float Remainder = 0F; // holds the accumulating fractional milliseconds.
+        public double Remainder = .0; // holds the accumulating fractional milliseconds.
         public float Offset = 0; // in BPM
         protected string BaseSourceName;
 
@@ -181,8 +181,8 @@ namespace Metronome
         {
             foreach (IStreamProvider src in AudioSources.Values)
             {
-                float current = src.GetOffset();
-                float add = BeatCell.ConvertFromBpm(offset, src);
+                double current = src.GetOffset();
+                double add = BeatCell.ConvertFromBpm(offset, src);
                 src.SetOffset(current + add);
             }
         }
@@ -235,14 +235,14 @@ namespace Metronome
             // for each beat, iterate over all beats and build a beat list of values from beats of same source.
             for (int i=0; i<Beat.Count; i++)
             {
-                List<float> cells = new List<float>(); 
-                float accumulator = 0;
+                List<double> cells = new List<double>(); 
+                double accumulator = 0;
                 // Once per audio source
                 if (completed.Contains(Beat[i].AudioSource)) continue;
                 // if selected beat is not first in cycle, set it's offset
                 if (i != 0)
                 {
-                    float offsetAccumulate = 0f;
+                    double offsetAccumulate = 0f;
                     for (int p=0; p<i; p++)
                     {
                         offsetAccumulate += Beat[p].Bpm;
@@ -340,8 +340,8 @@ namespace Metronome
 
     public class BeatCell
     {
-        public float ByteInterval;
-        public float Bpm; // value expressed in BPM time.
+        public double ByteInterval;
+        public double Bpm; // value expressed in BPM time.
         public string SourceName;
         public Layer Layer;
         public IStreamProvider AudioSource;
@@ -352,12 +352,12 @@ namespace Metronome
             ByteInterval = Bpm * (60 / Metronome.GetInstance().Tempo) * AudioSource.BytesPerSec;
         }
 
-        static public float ConvertFromBpm(float bpm, IStreamProvider source)
+        static public double ConvertFromBpm(double bpm, IStreamProvider source)
         {
             return bpm * (60 / Metronome.GetInstance().Tempo) * source.BytesPerSec;
         }
 
-        public BeatCell(float beat, string sourceName = "") // value of beat, ex. "1/3"
+        public BeatCell(double beat, string sourceName = "") // value of beat, ex. "1/3"
         {
             SourceName = sourceName;
             Bpm = beat;
@@ -470,22 +470,23 @@ namespace Metronome
         {
             BeatCollection.Enumerator.MoveNext();
             ByteInterval = BeatCollection.Enumerator.Current;
+            Console.WriteLine($"pitch {ByteInterval}");
         }
 
-        public void SetOffset(float value)
+        public void SetOffset(double value)
         {
             InitialOffset = (int)value;
             OffsetRemainder = value - InitialOffset;
             hasOffset = true;
         }
 
-        public float GetOffset()
+        public double GetOffset()
         {
             return InitialOffset + OffsetRemainder;
         }
 
         protected int InitialOffset = 0; // time to wait before reading source.
-        protected float OffsetRemainder = 0f;
+        protected double OffsetRemainder = 0f;
         protected bool hasOffset = false;
 
         protected int ByteInterval;
@@ -614,22 +615,23 @@ namespace Metronome
         {
             BeatCollection.Enumerator.MoveNext();
             ByteInterval = BeatCollection.Enumerator.Current;
+            Console.WriteLine($"wav {ByteInterval}");
         }
 
-        public void SetOffset(float value)
+        public void SetOffset(double value)
         {
             initialOffset = (int)value;
             offsetRemainder = value = initialOffset;
             hasOffset = true;
         }
 
-        public float GetOffset()
+        public double GetOffset()
         {
             return initialOffset + offsetRemainder;
         }
 
         protected int initialOffset = 0;
-        protected float offsetRemainder = 0f;
+        protected double offsetRemainder = 0f;
         protected bool hasOffset = false;
 
         int leftOver = 0;
@@ -665,31 +667,31 @@ namespace Metronome
                 }
         
                 int limit;
-                int leftOver = 0;
-                //if (leftOver > 0)
-                //{
-                //    ByteInterval += leftOver;
-                //    leftOver = 0;
-                //}
+                //int leftOver = 0;
+                if (leftOver > 0)
+                {
+                    ByteInterval += leftOver;
+                    leftOver = 0;
+                }
 
-                if (ByteInterval < count) // bytes are aligned in 4
+                if (ByteInterval < count - totalBytesRead) // bytes are aligned in 4
                 {
                     leftOver += ByteInterval % 4; // save the leftovers
                     ByteInterval -= leftOver;
         
-                    if (totalBytesRead > ByteInterval)
+                    if (buffer.Count() - totalBytesRead < ByteInterval)
                     {
-                        leftOver += ByteInterval - totalBytesRead;
-                        ByteInterval = totalBytesRead;
-                        Console.WriteLine(leftOver);
+                        //leftOver += ByteInterval - totalBytesRead;
+                        //ByteInterval = totalBytesRead;
+                        limit = buffer.Count() - totalBytesRead;
                     }
-                    limit = ByteInterval;
+                    else limit = ByteInterval;
                 }
-                else limit = count;
+                else limit = count - totalBytesRead;
 
                 //int limit = Math.Min(count, ByteInterval);
                 // read file for complete count, or if the file is longer than interval, just read for interval.
-                int bytesRead = Ms.Read(buffer, offset + totalBytesRead, limit - totalBytesRead);
+                int bytesRead = Ms.Read(buffer, offset + totalBytesRead, limit);
 
                 bool eof = bytesRead == 0; // end of file was reached
         
@@ -844,9 +846,9 @@ namespace Metronome
 
         int BytesPerSec { get; set; }
 
-        void SetOffset(float value);
+        void SetOffset(double value);
 
-        float GetOffset();
+        double GetOffset();
 
         Layer Layer { get; set; }
 
@@ -859,10 +861,10 @@ namespace Metronome
     public class SourceBeatCollection : IEnumerable<int>
     {
         Layer Layer;
-        float[] Beats;
+        double[] Beats;
         public IEnumerator<int> Enumerator;
 
-        public SourceBeatCollection(Layer layer, float[] beats)
+        public SourceBeatCollection(Layer layer, double[] beats)
         {
             Layer = layer;
             Beats = beats;
@@ -878,6 +880,7 @@ namespace Metronome
                 int whole = (int)Beats[i];
         
                 Layer.Remainder += Beats[i] - whole;
+
                 if (Layer.Remainder >= 1) // fractional value exceeds 1, add it to whole
                 {
                     whole++;
