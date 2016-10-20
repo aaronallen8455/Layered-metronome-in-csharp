@@ -19,7 +19,7 @@ namespace Metronome
         static void Main(string[] args)
         {
             Metronome metronome = Metronome.GetInstance();
-            metronome.Tempo = 60;
+            metronome.Tempo = 90;
 
             var layer1 = new Layer(new BeatCell[]
             {
@@ -35,7 +35,7 @@ namespace Metronome
 
             var layer3 = new Layer(new BeatCell[]
             {
-                new BeatCell(4/3f)
+                new BeatCell(4/3f)//, new BeatCell(2/3f), new BeatCell(1/3f)
             }, "snare_xstick_v16.wav");
             
             var layer4 = new Layer(new BeatCell[]
@@ -632,12 +632,14 @@ namespace Metronome
         protected float offsetRemainder = 0f;
         protected bool hasOffset = false;
 
+        int leftOver = 0;
+
         public int ByteInterval;
 
         public override int Read(byte[] buffer, int offset, int count)
         {
             int totalBytesRead = 0;
-
+        
             while (totalBytesRead < count)
             {
                 // account for offset
@@ -650,7 +652,7 @@ namespace Metronome
                     }
                     initialOffset -= size;
                     totalBytesRead += size;
-
+        
                     if (initialOffset == 0)
                     {
                         Layer.Remainder += offsetRemainder;
@@ -658,21 +660,28 @@ namespace Metronome
                     }
                     else
                         continue;
-
+        
                     if (totalBytesRead == count) break;
                 }
-
+        
                 int limit;
                 int leftOver = 0;
+                //if (leftOver > 0)
+                //{
+                //    ByteInterval += leftOver;
+                //    leftOver = 0;
+                //}
+
                 if (ByteInterval < count) // bytes are aligned in 4
                 {
-                    leftOver = ByteInterval % 4; // save the leftovers
+                    leftOver += ByteInterval % 4; // save the leftovers
                     ByteInterval -= leftOver;
-
+        
                     if (totalBytesRead > ByteInterval)
                     {
-                        leftOver -= totalBytesRead - ByteInterval;
+                        leftOver += ByteInterval - totalBytesRead;
                         ByteInterval = totalBytesRead;
+                        Console.WriteLine(leftOver);
                     }
                     limit = ByteInterval;
                 }
@@ -681,21 +690,21 @@ namespace Metronome
                 //int limit = Math.Min(count, ByteInterval);
                 // read file for complete count, or if the file is longer than interval, just read for interval.
                 int bytesRead = Ms.Read(buffer, offset + totalBytesRead, limit - totalBytesRead);
-                
+
                 bool eof = bytesRead == 0; // end of file was reached
-
+        
                 ByteInterval -= bytesRead;
-
+        
                 // fill left-overs with zeros
-                if (leftOver > 0 && eof)
-                {
-                        //for (int i=0; i< leftOver; i++)
-                        //{
-                        //    buffer[offset + totalBytesRead + bytesRead + i] = 0;
-                        //}
-                    bytesRead += leftOver;
-                }
-
+                //if (leftOver > 0 && eof)
+                //{
+                //        //for (int i=0; i< leftOver; i++)
+                //        //{
+                //        //    buffer[offset + totalBytesRead + bytesRead + i] = 0;
+                //        //}
+                //    //bytesRead += leftOver;
+                //}
+        
                 // is end of interval?
                 if (ByteInterval == 0)
                 {
@@ -717,7 +726,7 @@ namespace Metronome
                     ByteInterval -= limit - bytesRead - totalBytesRead;
                     //
                     bytesRead += limit - bytesRead;
-
+        
                     if (ByteInterval == 0)
                     {
                         NextInterval();
@@ -725,11 +734,91 @@ namespace Metronome
                         Ms.Position = 0;
                     }
                 }
-
+        
                 totalBytesRead += bytesRead;
             }
             return count;
         }
+
+        //public override int Read(byte[] buffer, int offset, int count)
+        //{
+        //    int totalBytesRead = 0;
+        //
+        //    while (totalBytesRead < count)
+        //    {
+        //        // account for offset
+        //        if (hasOffset && initialOffset != 0)
+        //        {
+        //            int size = Math.Min(count, initialOffset);
+        //            for (int i = 0; i < size; i++)
+        //            {
+        //                buffer[offset + totalBytesRead + i] = 0;
+        //            }
+        //            initialOffset -= size;
+        //            totalBytesRead += size;
+        //
+        //            if (initialOffset == 0)
+        //            {
+        //                Layer.Remainder += offsetRemainder;
+        //                hasOffset = false;
+        //            }
+        //            else
+        //                continue;
+        //
+        //            if (totalBytesRead == count) break;
+        //        }
+        //
+        //        int leftOver = 0;
+        //        if (ByteInterval < count) // bytes are aligned in 4
+        //        {
+        //            leftOver = ByteInterval % 4; // save the leftovers
+        //            ByteInterval -= leftOver;
+        //        }
+        //
+        //        int limit = Math.Min(count, ByteInterval);
+        //        // read file for complete count, or if the file is longer than interval, just read for interval.
+        //        int bytesRead = sourceStream.Read(buffer, offset + totalBytesRead, limit - totalBytesRead);
+        //
+        //        // fill left-overs with zeros
+        //        if (leftOver > 0)
+        //        {
+        //            for (int i = 0; i < leftOver; i++)
+        //            {
+        //                buffer[offset + totalBytesRead + bytesRead + i] = 0;
+        //            }
+        //        }
+        //
+        //        ByteInterval -= bytesRead;
+        //        // is end of interval?
+        //        if (ByteInterval == 0)
+        //        {
+        //            sourceStream.Position = 0;
+        //            NextInterval();
+        //        }
+        //        // we hit the end of the file, fill remaining spots with null
+        //        limit = Math.Min(count, ByteInterval);
+        //        if (bytesRead < count)
+        //        {
+        //            // fill with zeros
+        //            for (int i = 0; i < limit - bytesRead - totalBytesRead; i++)
+        //            {
+        //                buffer[offset + totalBytesRead + bytesRead + i] = 0;
+        //                ByteInterval--;
+        //            }
+        //            bytesRead += limit - bytesRead;
+        //
+        //            if (ByteInterval == 0)
+        //            {
+        //                //ByteInterval = BytesPerSec;
+        //                NextInterval();
+        //                sourceStream.Position = 0;
+        //            }
+        //        }
+        //
+        //        totalBytesRead += bytesRead;
+        //    }
+        //    return count;
+        //}
 
         void IStreamProvider.Dispose()
         {
