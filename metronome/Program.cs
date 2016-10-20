@@ -21,40 +21,42 @@ namespace Metronome
             Metronome metronome = Metronome.GetInstance();
             metronome.Tempo = 60;
 
-
             var layer1 = new Layer(new BeatCell[]
             {
                 new BeatCell(1f)
             }, "a4");
             layer1.Volume = .6f;
+            layer1.Pan = 1;
             
             var layer2 = new Layer(new BeatCell[]
             {
-                new BeatCell(4f/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
+                new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
             }, "c#4");
-            
+
             var layer3 = new Layer(new BeatCell[]
             {
-                new BeatCell(4f/3f)
+                new BeatCell(4/3f)
             }, "snare_xstick_v16.wav");
             
             var layer4 = new Layer(new BeatCell[]
             {
-                new BeatCell(4f/11f)
+                new BeatCell(4/11f)
             }, "G5");
+            
+            var layer5 = new Layer(new BeatCell[]
+            {
+                new BeatCell(4/17f)
+            }, "C5");
+            layer5.Volume = .1f;
+            layer5.Pan = -1;
 
             metronome.AddLayer(layer1);
             metronome.AddLayer(layer2);
             metronome.AddLayer(layer3);
             metronome.AddLayer(layer4);
+            metronome.AddLayer(layer5);
             
             Thread.Sleep(2000);
-
-            //var p = new PitchSource("a4");
-            //p.Play(.6f);
-            //Thread.Sleep(800);
-            //p.Stop();
-            //p.Play(.6f);
 
             metronome.Start();
             Console.ReadKey();
@@ -297,7 +299,13 @@ namespace Metronome
             {
                 foreach (IStreamProvider src in AudioSources.Values) src.Volume = value;
                 if (IsPitch) BasePitchSource.Volume = value;
-                BaseAudioSource.Volume = value;
+                else
+                {
+                    // is there a pitch source?
+                    if (BasePitchSource != default(PitchStream))
+                        BasePitchSource.Volume = value;
+                    BaseAudioSource.Volume = value;
+                }
             }
         }
 
@@ -306,6 +314,13 @@ namespace Metronome
             set
             {
                 foreach (IStreamProvider src in AudioSources.Values) src.Pan = value;
+                if (IsPitch) BasePitchSource.Pan = value;
+                else
+                {
+                    if (BasePitchSource != default(PitchStream))
+                        BasePitchSource.Pan = value;
+                    BaseAudioSource.Pan = value;
+                }
             }
         }
 
@@ -326,37 +341,15 @@ namespace Metronome
     public class BeatCell
     {
         public float ByteInterval;
-        //protected int Whole;
-        //protected float R = .0F; // fractional portion of samples
         public float Bpm; // value expressed in BPM time.
         public string SourceName;
         public Layer Layer;
         public IStreamProvider AudioSource;
 
-        //public int BeatValue
-        //{
-        //    get
-        //    {
-        //        Layer.Remainder += R;
-        //        if (Layer.Remainder >= 1)
-        //        {
-        //            Layer.Remainder -= 1;
-        //            return Whole + 1;
-        //        }
-        //        return Whole;
-        //    }
-        //
-        //    set
-        //    {
-        //
-        //    }
-        //}
         public void SetBeatValue()
         {
             // set byte interval based on tempo and audiosource sample rate
             ByteInterval = Bpm * (60 / Metronome.GetInstance().Tempo) * AudioSource.BytesPerSec;
-            //Whole = (int)byteIntr;
-            //R = byteIntr - Whole;
         }
 
         static public float ConvertFromBpm(float bpm, IStreamProvider source)
@@ -368,21 +361,6 @@ namespace Metronome
         {
             SourceName = sourceName;
             Bpm = beat;
-            // check if fractional
-            //if (beat.Contains('/'))
-            //{
-            //    long n = Convert.ToInt64(beat.Split('/').First());
-            //    int Denominator = Convert.ToInt32(beat.Split('/').Last());
-            //    Whole = n / Denominator;
-            //
-            //    int Numerator = (int) (n % Denominator);
-            //    R = (float)Numerator / Denominator;
-            //}
-            //else
-            //{
-            //    // no fraction
-            //    Whole = Convert.ToInt64(beat);
-            //}
         }
     }
 
@@ -559,7 +537,6 @@ namespace Metronome
                 }
 
                 nSample++;
-
                 // Set the pan amounts.
                 for (int i = 0; i < waveFormat.Channels; i++)
                 {
@@ -581,6 +558,7 @@ namespace Metronome
     public class WavFileStream : WaveStream, IStreamProvider
     {
         WaveStream sourceStream;
+        MemoryStream Ms;
 
         public WaveChannel32 Channel { get; set; }
 
@@ -594,9 +572,12 @@ namespace Metronome
 
         public WavFileStream(string fileName)
         {
-            sourceStream = new WaveFileReader(fileName);
+            sourceStream = new WaveFileReader(fileName); //todo: use memory stream instead of file?
             Channel = new WaveChannel32(this);
             BytesPerSec = sourceStream.WaveFormat.AverageBytesPerSecond;
+
+            Ms = new MemoryStream(File.ReadAllBytes(fileName));
+
         }
 
         public double Volume
@@ -681,50 +662,67 @@ namespace Metronome
                     if (totalBytesRead == count) break;
                 }
 
+                int limit;
                 int leftOver = 0;
                 if (ByteInterval < count) // bytes are aligned in 4
                 {
                     leftOver = ByteInterval % 4; // save the leftovers
                     ByteInterval -= leftOver;
-                }
 
-                int limit = Math.Min(count, ByteInterval);
-                // read file for complete count, or if the file is longer than interval, just read for interval.
-                int bytesRead = sourceStream.Read(buffer, offset + totalBytesRead, limit - totalBytesRead);
-
-                // fill left-overs with zeros
-                if (leftOver > 0)
-                {
-                    for (int i=0; i< leftOver; i++)
+                    if (totalBytesRead > ByteInterval)
                     {
-                        buffer[offset + totalBytesRead + bytesRead + i] = 0;
+                        leftOver -= totalBytesRead - ByteInterval;
+                        ByteInterval = totalBytesRead;
                     }
+                    limit = ByteInterval;
                 }
+                else limit = count;
+
+                //int limit = Math.Min(count, ByteInterval);
+                // read file for complete count, or if the file is longer than interval, just read for interval.
+                int bytesRead = Ms.Read(buffer, offset + totalBytesRead, limit - totalBytesRead);
+                
+                bool eof = bytesRead == 0; // end of file was reached
 
                 ByteInterval -= bytesRead;
+
+                // fill left-overs with zeros
+                if (leftOver > 0 && eof)
+                {
+                        //for (int i=0; i< leftOver; i++)
+                        //{
+                        //    buffer[offset + totalBytesRead + bytesRead + i] = 0;
+                        //}
+                    bytesRead += leftOver;
+                }
+
                 // is end of interval?
                 if (ByteInterval == 0)
                 {
-                    sourceStream.Position = 0;
+                    //sourceStream.Position = 0;
+                    Ms.Position = 0;
                     NextInterval();
                 }
                 // we hit the end of the file, fill remaining spots with null
                 limit = Math.Min(count, ByteInterval);
-                if (bytesRead < count)
+                if (bytesRead < count && eof)
                 {
                     // fill with zeros
-                    for (int i = 0; i < limit - bytesRead - totalBytesRead; i++)
-                    {
-                        buffer[offset + totalBytesRead + bytesRead + i] = 0;
-                        ByteInterval--;
-                    }
+                    //for (int i = 0; i < limit - bytesRead - totalBytesRead; i++)
+                    //{
+                    //    buffer[offset + totalBytesRead + bytesRead + i] = 0;
+                    //    ByteInterval--;
+                    //}
+                    //
+                    ByteInterval -= limit - bytesRead - totalBytesRead;
+                    //
                     bytesRead += limit - bytesRead;
 
                     if (ByteInterval == 0)
                     {
-                        //ByteInterval = BytesPerSec;
                         NextInterval();
-                        sourceStream.Position = 0;
+                        //sourceStream.Position = 0;
+                        Ms.Position = 0;
                     }
                 }
 
