@@ -29,10 +29,10 @@ namespace Metronome
             layer1.Pan = 1;
             layer1.SetOffset(1d);
             
-            //var layer2 = new Layer(new BeatCell[]
-            //{
-            //    new BeatCell(4/5f)//, new TimeInterval("1000/3"), new TimeInterval("1000/3")
-            //}, "c#4");
+            var layer2 = new Layer(new BeatCell[]
+            {
+                new BeatCell(4/5d), new BeatCell(4/5d, "d4"), new BeatCell(4/5d, "e4")
+            }, "c#4");
 
             var layer3 = new Layer(new BeatCell[]
             {
@@ -42,7 +42,7 @@ namespace Metronome
 
             var layer4 = new Layer(new BeatCell[]
             {
-                new BeatCell(1f), new BeatCell(2/3f), new BeatCell(1/3f)
+                new BeatCell(1d), new BeatCell(2/3d), new BeatCell(1/3d)
             }, "ride_center_v8.wav");
             
             //var layer4 = new Layer(new BeatCell[]
@@ -58,10 +58,11 @@ namespace Metronome
             //layer5.Pan = -1;
 
             metronome.AddLayer(layer1);
-            //metronome.AddLayer(layer2);
+            metronome.AddLayer(layer2);
             metronome.AddLayer(layer3);
             metronome.AddLayer(layer4);
             //metronome.AddLayer(layer5);
+            metronome.SetRandomMute(10);
             
             Thread.Sleep(2000);
 
@@ -137,6 +138,18 @@ namespace Metronome
             get; set;
         }
 
+        public static Random Rand = new Random();
+
+        public bool IsRandomMute = false;
+
+        public int RandomMutePercent;
+
+        public void SetRandomMute(int percent)
+        {
+            RandomMutePercent = percent < 100 && percent >= 0 ? percent : 0;
+            IsRandomMute = RandomMutePercent > 0 ? true : false;
+        }
+
         public void Dispose()
         {
             Player.Dispose();
@@ -172,7 +185,8 @@ namespace Metronome
             if (baseSourceName.Count() <= 5)
             {
                 BasePitchSource = new PitchStream();
-                BasePitchSource.SetFrequency(baseSourceName);
+                //BasePitchSource.SetFrequency(baseSourceName);
+                BasePitchSource.BaseFrequency = PitchStream.ConvertFromSymbol(baseSourceName);
                 BasePitchSource.Layer = this;
                 BaseAudioSource = BasePitchSource; // needs to be cast back to ISampleProvider when added to mixer
                 IsPitch = true;
@@ -227,17 +241,26 @@ namespace Metronome
                 {
                     if (beat[i].SourceName != string.Empty && beat[i].SourceName.Count() <= 5)
                     {
+                        // beat has a defined pitch
                         // check if basepitch source exists
                         if (BasePitchSource == default(PitchStream))
                         {
                             BasePitchSource = new PitchStream();
-                            BasePitchSource.SetFrequency(beat[i].SourceName);
+                            //BasePitchSource.SetFrequency(beat[i].SourceName);
+                            BasePitchSource.SetFrequency(beat[i].SourceName, beat[i]);
+                            BasePitchSource.BaseFrequency = PitchStream.ConvertFromSymbol(beat[i].SourceName); // make the base freq
                             BasePitchSource.Layer = this;
                         }
                         beat[i].AudioSource = BasePitchSource;
+                        BasePitchSource.SetFrequency(beat[i].SourceName, beat[i]);
                     }
                     else
                     {
+                        if (IsPitch)
+                        {
+                            // no pitch defined, use base pitch
+                            BasePitchSource.SetFrequency(BasePitchSource.BaseFrequency.ToString(), beat[i]);
+                        }
                         beat[i].AudioSource = BaseAudioSource;
                     }
                 }
@@ -302,16 +325,6 @@ namespace Metronome
                 Beat[i].AudioSource.BeatCollection = new SourceBeatCollection(this, cells.ToArray(), Beat[i].AudioSource);
             }
         }
-
-        protected void SetInitialOffset(float value, IStreamProvider source)
-        {
-
-        }
-        //public void Progress()
-        //{
-        //    NextNote += Beat[CurrentBeatIndex++].BeatValue;
-        //    if (CurrentBeatIndex == Beat.Count) CurrentBeatIndex = 0;
-        //}
 
         protected float volume;
         public float Volume
@@ -406,31 +419,31 @@ namespace Metronome
 
         // Generator variable
         private int nSample;
-
-        //public PitchStream()
-        //    : this(44100, 2)
-        //{
-        //
-        //}
         
         public PitchStream(int sampleRate = 16000, int channel = 2)
         {
             waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channel);
 
             // Default
-            Frequency = 440.0;
+            Frequency = BaseFrequency = 440.0;
             Volume = .6f;
             Pan = 0;
             BytesPerSec = waveFormat.AverageBytesPerSecond / 8;
+            freqEnum = Frequencies.Values.GetEnumerator();
         }
 
-        public void SetFrequency(string symbol)
+        public void SetFrequency(string symbol, BeatCell cell)
+        {
+            Frequencies.Add(cell, ConvertFromSymbol(symbol));
+            freqEnum = Frequencies.Values.GetEnumerator();
+        }
+
+        public static double ConvertFromSymbol(string symbol)
         {
             string note = new string(symbol.TakeWhile((x) => !char.IsNumber(x)).ToArray()).ToLower();
             if (note == string.Empty) // raw pitch value
             {
-                Frequency = Convert.ToSingle(symbol);
-                return;
+                return Convert.ToDouble(symbol);
             }
             string o = new string(symbol.SkipWhile((x) => !char.IsNumber(x)).ToArray());
             int octave;
@@ -439,7 +452,8 @@ namespace Metronome
 
             float index = Notes[note];
             index += octave * 12;
-            Frequency = (float)(440 * Math.Pow(2, index / 12));
+            double frequency = 440 * Math.Pow(2, index / 12);
+            return frequency;
         }
 
         protected static Dictionary<string, int> Notes = new Dictionary<string, int>
@@ -457,7 +471,28 @@ namespace Metronome
             get { return waveFormat; }
         }
 
+        // dictionary of frequencies and the cells they are tied to.
+        public Dictionary<BeatCell, double> Frequencies = new Dictionary<BeatCell, double>();
+        protected IEnumerator<double> freqEnum;
+
+        // get the next frequency in the sequence
+        public double GetNextFrequency()
+        {
+            var e = Frequencies.Values.GetEnumerator();
+            if (freqEnum.MoveNext()) return freqEnum.Current;
+            else
+            {
+                freqEnum = Frequencies.Values.GetEnumerator();
+                freqEnum.MoveNext();
+                return freqEnum.Current;
+            }
+        }
+
+        // the current frequency
         public double Frequency { get; set; }
+
+        // the base frequency. used if cell doesn't specify a pitch
+        public double BaseFrequency { get; set; }
 
         public double Gain { get; set; }
 
@@ -489,10 +524,22 @@ namespace Metronome
         private float left;
         private float right;
 
-        public void NextInterval()
+        public int GetNextInterval()
         {
             BeatCollection.Enumerator.MoveNext();
-            ByteInterval = BeatCollection.Enumerator.Current;
+            int result = BeatCollection.Enumerator.Current;
+            // handle random mute
+            if (Metronome.GetInstance().IsRandomMute)
+            {
+                int rand = (int)(Metronome.Rand.NextDouble() * 100);
+                if (rand < Metronome.GetInstance().RandomMutePercent)
+                {
+                    BeatCollection.Enumerator.MoveNext();
+                    result += BeatCollection.Enumerator.Current;
+                    lastIntervalRandMuted = true;
+                }
+            }
+            return result;
         }
 
         public void SetOffset(double value)
@@ -510,6 +557,7 @@ namespace Metronome
         protected int InitialOffset = 0; // time to wait before reading source.
         protected double OffsetRemainder = 0;
         protected bool hasOffset = false;
+        protected bool lastIntervalRandMuted = false; // used to cycle pitch if the last interval was randomly muted.
 
         protected int ByteInterval;
 
@@ -525,10 +573,10 @@ namespace Metronome
                 // account for offset
                 if (hasOffset)
                 {
-                    for (int i=0; i<waveFormat.Channels; i++)
-                    {
-                        buffer[outIndex++] = 0;
-                    }
+                    //for (int i=0; i<waveFormat.Channels; i++)
+                    //{
+                    //    buffer[outIndex++] = 0;
+                    //}
                     InitialOffset -= 1;
                     if (InitialOffset == 0)
                     {
@@ -542,9 +590,15 @@ namespace Metronome
                 // interval is over, reset
                 if (ByteInterval == 0)
                 {
+                    if (lastIntervalRandMuted)
+                    {
+                        GetNextFrequency();
+                        lastIntervalRandMuted = false;
+                    }
                     Gain = Volume;
                     nSample = 0;
-                    NextInterval();
+                    Frequency = GetNextFrequency();
+                    ByteInterval = GetNextInterval();
                 }
                 if (Gain <= 0)
                 {
@@ -636,16 +690,28 @@ namespace Metronome
             set { sourceStream.Position = value; }
         }
 
-        public void NextInterval()
+        public int GetNextInterval()
         {
             BeatCollection.Enumerator.MoveNext();
-            ByteInterval = BeatCollection.Enumerator.Current;
+            int result = BeatCollection.Enumerator.Current;
+            // handle random mute
+            if (Metronome.GetInstance().IsRandomMute)
+            {
+                int rand = (int)(Metronome.Rand.NextDouble() * 100);
+                if (rand < Metronome.GetInstance().RandomMutePercent)
+                {
+                    BeatCollection.Enumerator.MoveNext();
+                    result += BeatCollection.Enumerator.Current;
+                }
+            }
+            return result;
         }
 
         public void SetOffset(double value)
         {
-            initialOffset = (int)(value * 4);
-            offsetRemainder = value - initialOffset;
+            offsetRemainder = ((int)value) - value;
+            initialOffset = (int)value * 4;
+            // offsetRemainder = value - initialOffset;
             hasOffset = true;
         }
 
@@ -682,7 +748,7 @@ namespace Metronome
 
                 if (ByteInterval == 0)
                 {
-                    NextInterval();
+                    ByteInterval = GetNextInterval();
                     cacheIndex = 0;
                 }
 
@@ -709,7 +775,7 @@ namespace Metronome
                     {
                         int carry = ByteInterval < 0 ? ByteInterval : 0;
                        
-                        NextInterval();
+                        ByteInterval = GetNextInterval();
                         ByteInterval += carry;
                         cacheIndex = 0;
                     }
@@ -746,7 +812,7 @@ namespace Metronome
     {
         bool IsPitch { get; }
 
-        void NextInterval();
+        int GetNextInterval();
 
         double Volume { get; set; }
 
