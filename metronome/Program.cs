@@ -19,7 +19,7 @@ namespace Metronome
         static void Main(string[] args)
         {
             Metronome metronome = Metronome.GetInstance();
-            metronome.Tempo = 60f;
+            metronome.Tempo = 110f;
 
             var layer1 = new Layer(new BeatCell[]
             {
@@ -62,8 +62,8 @@ namespace Metronome
             metronome.AddLayer(layer3);
             metronome.AddLayer(layer4);
             //metronome.AddLayer(layer5);
-            //metronome.SetRandomMute(10);
-            metronome.SetSilentInterval(4d, 4d);
+            metronome.SetRandomMute(50, 10);
+            //metronome.SetSilentInterval(4d, 2d);
             
             Thread.Sleep(2000);
 
@@ -144,11 +144,13 @@ namespace Metronome
         public bool IsRandomMute = false;
 
         public int RandomMutePercent;
+        public int RandomMuteSeconds = 0;
 
-        public void SetRandomMute(int percent)
+        public void SetRandomMute(int percent, int seconds = 0)
         {
-            RandomMutePercent = percent < 100 && percent >= 0 ? percent : 0;
+            RandomMutePercent = percent <= 100 && percent >= 0 ? percent : 0;
             IsRandomMute = RandomMutePercent > 0 ? true : false;
+            RandomMuteSeconds = seconds;
         }
 
         public bool IsSilentInterval = false;
@@ -571,9 +573,10 @@ namespace Metronome
             {
                 BeatCollection.Enumerator.MoveNext();
                 result += BeatCollection.Enumerator.Current;
-                lastIntervalMuted = true;
-                Frequency = GetNextFrequency();
+                //lastIntervalMuted = true;
+                currentlyMuted = true;
             }
+            else currentlyMuted = false;
 
             previousByteInterval = result;
 
@@ -594,12 +597,32 @@ namespace Metronome
             SilentIntervalRemainder = audible - currentSlntIntvl + OffsetRemainder;
         }
 
+        protected int? randomMuteCountdown = null;
+        protected int randomMuteCountdownTotal;
+        protected bool currentlyMuted = false;
         protected bool IsRandomMuted()
         {
             if (!Metronome.GetInstance().IsRandomMute) return false;
 
+            // init countdown
+            if (randomMuteCountdown == null && Metronome.GetInstance().RandomMuteSeconds > 0)
+            {
+                randomMuteCountdown = randomMuteCountdownTotal = Metronome.GetInstance().RandomMuteSeconds * BytesPerSec;
+            }
+
             int rand = (int)(Metronome.Rand.NextDouble() * 100);
-            return rand < Metronome.GetInstance().RandomMutePercent;
+
+            if (randomMuteCountdown == null)
+                return rand < Metronome.GetInstance().RandomMutePercent;
+            else
+            {
+                // countdown
+                if (randomMuteCountdown > 0) randomMuteCountdown -= previousByteInterval;
+                else if (randomMuteCountdown < 0) randomMuteCountdown = 0;
+
+                float factor = (float)(randomMuteCountdownTotal - randomMuteCountdown) / randomMuteCountdownTotal;
+                return rand < Metronome.GetInstance().RandomMutePercent * factor;
+            }
         }
 
         protected bool IsSilentIntervalSilent() // check if silent interval is currently silent or audible. Perform timing shifts
@@ -671,15 +694,15 @@ namespace Metronome
                 // interval is over, reset
                 if (ByteInterval == 0)
                 {
-                    if (lastIntervalMuted)
-                    {
-                        GetNextFrequency();
-                        lastIntervalMuted = false;
-                    }
+                    //if (lastIntervalMuted)
+                    //{
+                    //    GetNextFrequency();
+                    //    lastIntervalMuted = false;
+                    //}
 
                     Frequency = GetNextFrequency();
                     ByteInterval = GetNextInterval();
-                    if (!silentIntvlSilent)
+                    if (!silentIntvlSilent && !currentlyMuted)
                     {
                         Gain = Volume;
                         nSample = 0;
@@ -791,7 +814,9 @@ namespace Metronome
             {
                 BeatCollection.Enumerator.MoveNext();
                 result += BeatCollection.Enumerator.Current;
+                currentlyMuted = true;
             }
+            else currentlyMuted = false;
 
             previousByteInterval = result;
 
@@ -813,8 +838,8 @@ namespace Metronome
                     SilentIntervalRemainder += nextInterval - ((int)nextInterval);
                     if (SilentIntervalRemainder >= 1)
                     {
-                        currentSlntIntvl++;
-                        SilentIntervalRemainder--;
+                        currentSlntIntvl += 1;
+                        SilentIntervalRemainder -= 1;
                     }
                 } while (currentSlntIntvl < 0);
             }
@@ -822,19 +847,37 @@ namespace Metronome
             return silentIntvlSilent;
         }
 
+        protected int? randomMuteCountdown = null;
+        protected int randomMuteCountdownTotal;
+        protected bool currentlyMuted = false;
         protected bool IsRandomMuted()
         {
             if (!Metronome.GetInstance().IsRandomMute) return false;
 
+            // init countdown
+            if (randomMuteCountdown == null && Metronome.GetInstance().RandomMuteSeconds > 0)
+            {
+                randomMuteCountdown = randomMuteCountdownTotal = Metronome.GetInstance().RandomMuteSeconds * BytesPerSec;
+            }
+
             int rand = (int)(Metronome.Rand.NextDouble() * 100);
-            return rand < Metronome.GetInstance().RandomMutePercent;
+            if (randomMuteCountdown == null)
+                return rand < Metronome.GetInstance().RandomMutePercent;
+            else
+            {
+                // countdown
+                if (randomMuteCountdown > 0) randomMuteCountdown -= previousByteInterval;
+                else if (randomMuteCountdown < 0) randomMuteCountdown = 0;
+
+                float factor = (float)(randomMuteCountdownTotal - randomMuteCountdown) / randomMuteCountdownTotal;
+                return rand < Metronome.GetInstance().RandomMutePercent * factor;
+            }
         }
 
         public void SetOffset(double value)
         {
             offsetRemainder = ((int)value) - value;
             initialOffset = (int)value * 4;
-            // offsetRemainder = value - initialOffset;
             hasOffset = true;
         }
 
@@ -861,7 +904,7 @@ namespace Metronome
             SilentIntervalRemainder = audible - currentSlntIntvl + offsetRemainder;
         }
 
-        protected int previousByteInterval;
+        protected int previousByteInterval = 0;
 
         public int ByteInterval;
 
@@ -884,11 +927,10 @@ namespace Metronome
                         hasOffset = false;
                     }
                 }
-
                 if (ByteInterval == 0)
                 {
                     ByteInterval = GetNextInterval();
-                    if (!silentIntvlSilent) cacheIndex = 0;
+                    if (!silentIntvlSilent && !currentlyMuted) cacheIndex = 0;
                 }
 
                 if (cacheIndex < cacheSize) // play from the sample
@@ -909,7 +951,7 @@ namespace Metronome
                         chunkSize += (4 - chunkSizeMod);
                         ByteInterval -= (4 - chunkSizeMod);
                     }
-
+                    
                     if (ByteInterval <= 0)
                     {
                         int carry = ByteInterval < 0 ? ByteInterval : 0;
@@ -920,10 +962,10 @@ namespace Metronome
                     }
 
                     // dont read more than cache size
-                    if (offset + bytesCopied + chunkSize > cacheSize - cacheIndex)
+                    if (chunkSize > cacheSize - cacheIndex)
                     {
-                        chunkSize = cacheSize - cacheIndex - (offset + bytesCopied);
-                        chunkSize -= chunkSize % 4;
+                        chunkSize = cacheSize - cacheIndex;// - (offset + bytesCopied);
+                        //chunkSize -= chunkSize % 4;
                     }
 
                     if (chunkSize >= 4)
@@ -942,6 +984,7 @@ namespace Metronome
                     bytesCopied += smallest;
                 }
             }
+
             return count;
         }
     }
