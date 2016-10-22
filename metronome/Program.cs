@@ -39,7 +39,7 @@ namespace Metronome
                 new BeatCell(2/3d)//, new BeatCell(2/3f), new BeatCell(1/3f)
             }, "snare_xstick_v16.wav");
             layer3.SetOffset(1 / 3d);
-
+            //
             var layer4 = new Layer(new BeatCell[]
             {
                 new BeatCell(1d), new BeatCell(2/3d), new BeatCell(1/3d)
@@ -62,7 +62,8 @@ namespace Metronome
             metronome.AddLayer(layer3);
             metronome.AddLayer(layer4);
             //metronome.AddLayer(layer5);
-            metronome.SetRandomMute(10);
+            //metronome.SetRandomMute(10);
+            metronome.SetSilentInterval(4d, 4d);
             
             Thread.Sleep(2000);
 
@@ -150,6 +151,36 @@ namespace Metronome
             IsRandomMute = RandomMutePercent > 0 ? true : false;
         }
 
+        public bool IsSilentInterval = false;
+
+        public double AudibleInterval;
+        public double SilentInterval;
+
+        public void SetSilentInterval(double audible, double silent)
+        {
+            if (audible > 0 && silent > 0)
+            {
+                AudibleInterval = audible;
+                SilentInterval = silent;
+                IsSilentInterval = true;
+                // set for all audio sources
+                foreach (Layer layer in Layers)
+                {
+                    // for each audio source in the layer
+                    foreach (IStreamProvider src in layer.AudioSources.Values)
+                    {
+                        src.SetSilentInterval(audible, silent);
+                    }
+                    layer.BaseAudioSource.SetSilentInterval(audible, silent);
+
+                    if (!layer.IsPitch && layer.BasePitchSource != default(PitchStream))
+                        layer.BasePitchSource.SetSilentInterval(audible, silent);
+                }
+            }
+            else
+                IsSilentInterval = false;
+        }
+
         public void Dispose()
         {
             Player.Dispose();
@@ -169,6 +200,7 @@ namespace Metronome
 
         public double Remainder = .0; // holds the accumulating fractional milliseconds.
         public float Offset = 0; // in BPM
+        public double SilentIntervalRemainder = .0; // holds fractional portion of silent interval
         protected string BaseSourceName;
 
         public Layer(BeatCell[] beat, string baseSourceName)
@@ -478,7 +510,6 @@ namespace Metronome
         // get the next frequency in the sequence
         public double GetNextFrequency()
         {
-            var e = Frequencies.Values.GetEnumerator();
             if (freqEnum.MoveNext()) return freqEnum.Current;
             else
             {
@@ -528,18 +559,71 @@ namespace Metronome
         {
             BeatCollection.Enumerator.MoveNext();
             int result = BeatCollection.Enumerator.Current;
-            // handle random mute
-            if (Metronome.GetInstance().IsRandomMute)
+            // hand silent interval
+
+            if (IsSilentIntervalSilent())
             {
-                int rand = (int)(Metronome.Rand.NextDouble() * 100);
-                if (rand < Metronome.GetInstance().RandomMutePercent)
-                {
-                    BeatCollection.Enumerator.MoveNext();
-                    result += BeatCollection.Enumerator.Current;
-                    lastIntervalRandMuted = true;
-                }
+                previousByteInterval = result;
+                return result;
             }
+            // handle random mute
+            if (IsRandomMuted())
+            {
+                BeatCollection.Enumerator.MoveNext();
+                result += BeatCollection.Enumerator.Current;
+                lastIntervalMuted = true;
+                Frequency = GetNextFrequency();
+            }
+
+            previousByteInterval = result;
+
             return result;
+        }
+
+        protected double SilentInterval; // remaining samples in silent interval
+        protected double AudibleInterval; // remaining samples in audible interval
+        protected int currentSlntIntvl;
+        protected bool silentIntvlSilent = false;
+        protected double SilentIntervalRemainder; // fractional portion
+
+        public void SetSilentInterval(double audible, double silent)
+        {
+            AudibleInterval = BeatCell.ConvertFromBpm(audible, this);
+            SilentInterval = BeatCell.ConvertFromBpm(silent, this);
+            currentSlntIntvl = (int)AudibleInterval - InitialOffset;
+            SilentIntervalRemainder = audible - currentSlntIntvl + OffsetRemainder;
+        }
+
+        protected bool IsRandomMuted()
+        {
+            if (!Metronome.GetInstance().IsRandomMute) return false;
+
+            int rand = (int)(Metronome.Rand.NextDouble() * 100);
+            return rand < Metronome.GetInstance().RandomMutePercent;
+        }
+
+        protected bool IsSilentIntervalSilent() // check if silent interval is currently silent or audible. Perform timing shifts
+        {
+            if (!Metronome.GetInstance().IsSilentInterval) return false;
+
+            currentSlntIntvl -= previousByteInterval;
+            if (currentSlntIntvl <= 0)
+            {
+                do
+                {
+                    silentIntvlSilent = !silentIntvlSilent;
+                    double nextInterval = silentIntvlSilent ? SilentInterval : AudibleInterval;
+                    currentSlntIntvl += (int)nextInterval;
+                    SilentIntervalRemainder += nextInterval - ((int)nextInterval);
+                    if (SilentIntervalRemainder >= 1)
+                    {
+                        currentSlntIntvl++;
+                        SilentIntervalRemainder--;
+                    }
+                } while (currentSlntIntvl < 0);
+            }
+
+            return silentIntvlSilent;
         }
 
         public void SetOffset(double value)
@@ -557,8 +641,9 @@ namespace Metronome
         protected int InitialOffset = 0; // time to wait before reading source.
         protected double OffsetRemainder = 0;
         protected bool hasOffset = false;
-        protected bool lastIntervalRandMuted = false; // used to cycle pitch if the last interval was randomly muted.
+        protected bool lastIntervalMuted = false; // used to cycle pitch if the last interval was randomly muted.
 
+        protected int previousByteInterval;
         protected int ByteInterval;
 
         public int Read(float[] buffer, int offset, int count)
@@ -573,10 +658,6 @@ namespace Metronome
                 // account for offset
                 if (hasOffset)
                 {
-                    //for (int i=0; i<waveFormat.Channels; i++)
-                    //{
-                    //    buffer[outIndex++] = 0;
-                    //}
                     InitialOffset -= 1;
                     if (InitialOffset == 0)
                     {
@@ -590,16 +671,21 @@ namespace Metronome
                 // interval is over, reset
                 if (ByteInterval == 0)
                 {
-                    if (lastIntervalRandMuted)
+                    if (lastIntervalMuted)
                     {
                         GetNextFrequency();
-                        lastIntervalRandMuted = false;
+                        lastIntervalMuted = false;
                     }
-                    Gain = Volume;
-                    nSample = 0;
+
                     Frequency = GetNextFrequency();
                     ByteInterval = GetNextInterval();
+                    if (!silentIntvlSilent)
+                    {
+                        Gain = Volume;
+                        nSample = 0;
+                    }
                 }
+
                 if (Gain <= 0)
                 {
                     nSample = 0;
@@ -612,8 +698,8 @@ namespace Metronome
                     sampleValue = Gain * Math.Sin(nSample * multiple);
                     Gain -= .0002;
                 }
-
                 nSample++;
+
                 // Set the pan amounts.
                 for (int i = 0; i < waveFormat.Channels; i++)
                 {
@@ -694,17 +780,54 @@ namespace Metronome
         {
             BeatCollection.Enumerator.MoveNext();
             int result = BeatCollection.Enumerator.Current;
-            // handle random mute
-            if (Metronome.GetInstance().IsRandomMute)
+
+            if (IsSilentIntervalSilent())
             {
-                int rand = (int)(Metronome.Rand.NextDouble() * 100);
-                if (rand < Metronome.GetInstance().RandomMutePercent)
-                {
-                    BeatCollection.Enumerator.MoveNext();
-                    result += BeatCollection.Enumerator.Current;
-                }
+                previousByteInterval = result;
+                return result;
             }
+            // handle random mute
+            if (IsRandomMuted())
+            {
+                BeatCollection.Enumerator.MoveNext();
+                result += BeatCollection.Enumerator.Current;
+            }
+
+            previousByteInterval = result;
+
             return result;
+        }
+
+        protected bool IsSilentIntervalSilent() // check if silent interval is currently silent or audible. Perform timing shifts
+        {
+            if (!Metronome.GetInstance().IsSilentInterval) return false;
+
+            currentSlntIntvl -= previousByteInterval;
+            if (currentSlntIntvl <= 0)
+            {
+                do
+                {
+                    silentIntvlSilent = !silentIntvlSilent;
+                    double nextInterval = silentIntvlSilent ? SilentInterval : AudibleInterval;
+                    currentSlntIntvl += (int)nextInterval;
+                    SilentIntervalRemainder += nextInterval - ((int)nextInterval);
+                    if (SilentIntervalRemainder >= 1)
+                    {
+                        currentSlntIntvl++;
+                        SilentIntervalRemainder--;
+                    }
+                } while (currentSlntIntvl < 0);
+            }
+
+            return silentIntvlSilent;
+        }
+
+        protected bool IsRandomMuted()
+        {
+            if (!Metronome.GetInstance().IsRandomMute) return false;
+
+            int rand = (int)(Metronome.Rand.NextDouble() * 100);
+            return rand < Metronome.GetInstance().RandomMutePercent;
         }
 
         public void SetOffset(double value)
@@ -723,6 +846,22 @@ namespace Metronome
         protected int initialOffset = 0;
         protected double offsetRemainder = 0f;
         protected bool hasOffset = false;
+
+        protected double SilentInterval; // remaining samples in silent interval
+        protected double AudibleInterval; // remaining samples in audible interval
+        protected int currentSlntIntvl;
+        protected bool silentIntvlSilent = false;
+        protected double SilentIntervalRemainder; // fractional portion
+
+        public void SetSilentInterval(double audible, double silent)
+        {
+            AudibleInterval = BeatCell.ConvertFromBpm(audible, this) * 4;
+            SilentInterval = BeatCell.ConvertFromBpm(silent, this) * 4;
+            currentSlntIntvl = (int)AudibleInterval - initialOffset - 4;
+            SilentIntervalRemainder = audible - currentSlntIntvl + offsetRemainder;
+        }
+
+        protected int previousByteInterval;
 
         public int ByteInterval;
 
@@ -749,7 +888,7 @@ namespace Metronome
                 if (ByteInterval == 0)
                 {
                     ByteInterval = GetNextInterval();
-                    cacheIndex = 0;
+                    if (!silentIntvlSilent) cacheIndex = 0;
                 }
 
                 if (cacheIndex < cacheSize) // play from the sample
@@ -828,12 +967,13 @@ namespace Metronome
 
         double GetOffset();
 
+        void SetSilentInterval(double audible, double silent);
+
         Layer Layer { get; set; }
 
         SourceBeatCollection BeatCollection { get; set; }
 
         WaveFormat WaveFormat { get; }
-
     }
 
 
