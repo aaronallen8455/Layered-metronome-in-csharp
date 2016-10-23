@@ -31,7 +31,7 @@ namespace Metronome
             
             var layer2 = new Layer(new BeatCell[]
             {
-                new BeatCell(4/5d), new BeatCell(4/5d, "d4"), new BeatCell(4/5d, "e4")
+                new BeatCell(4/5d), new BeatCell(4/5d, "f4"), new BeatCell(4/5d, "a4")
             }, "c#4");
 
             var layer3 = new Layer(new BeatCell[]
@@ -39,7 +39,7 @@ namespace Metronome
                 new BeatCell(2/3d)//, new BeatCell(2/3f), new BeatCell(1/3f)
             }, "snare_xstick_v16.wav");
             layer3.SetOffset(1 / 3d);
-            //
+            
             var layer4 = new Layer(new BeatCell[]
             {
                 new BeatCell(1d), new BeatCell(2/3d), new BeatCell(1/3d)
@@ -62,14 +62,21 @@ namespace Metronome
             metronome.AddLayer(layer3);
             metronome.AddLayer(layer4);
             //metronome.AddLayer(layer5);
-            metronome.SetRandomMute(50, 10);
+            //metronome.SetRandomMute(50, 50);
             //metronome.SetSilentInterval(4d, 2d);
-            
+            //metronome.RemoveLayer(layer1);
             Thread.Sleep(2000);
 
-            metronome.Start();
-            Console.ReadKey();
-            metronome.Stop();
+            
+
+                metronome.Play();
+                Console.ReadKey();
+            Console.WriteLine(metronome.GetElapsedTime());
+                metronome.Stop();
+                Console.ReadKey();
+
+            metronome.Play();
+            Console.WriteLine(metronome.GetElapsedTime());
             Console.ReadKey();
             metronome.Dispose();
         }
@@ -100,7 +107,6 @@ namespace Metronome
 
         public void AddLayer(Layer layer)
         {
-            Layers.Add(layer);
             // add sources to mixer
             foreach (IStreamProvider src in layer.AudioSources.Values)
             {
@@ -114,7 +120,7 @@ namespace Metronome
             }
 
             if (layer.IsPitch) // if base source is a pitch stream.
-                Mixer.AddMixerInput((ISampleProvider)layer.BasePitchSource);
+                Mixer.AddMixerInput(layer.BasePitchSource);
             else
             {
                 Mixer.AddMixerInput(((WavFileStream)layer.BaseAudioSource).Channel);
@@ -122,21 +128,71 @@ namespace Metronome
                 if (layer.BasePitchSource != default(PitchStream))
                     Mixer.AddMixerInput(layer.BasePitchSource);
             }
+            // transfer silent interval if exists
+            if (IsSilentInterval)
+            {
+                foreach (IStreamProvider src in layer.AudioSources.Values)
+                {
+                    src.SetSilentInterval(AudibleInterval, SilentInterval);
+                }
+                layer.BaseAudioSource.SetSilentInterval(AudibleInterval, SilentInterval);
+
+                if (!layer.IsPitch && layer.BasePitchSource != default(PitchStream))
+                    layer.BasePitchSource.SetSilentInterval(AudibleInterval, SilentInterval);
+            }
+
+            Layers.Add(layer);
         }
 
-        public void Start()
+        public void RemoveLayer(Layer layer)
+        {
+            Layers.Remove(layer);
+            // remove from mixer
+            // have to remove all, then add back in
+            Mixer.RemoveAllMixerInputs();
+            foreach (Layer item in Layers.ToArray())
+            {
+                Layers.Remove(item);
+                AddLayer(item);
+            }
+            
+            layer.Dispose();
+        }
+
+        public void Play()
         {
             Player.Play();
         }
 
         public void Stop()
         {
-            Player.Stop();
+            Player.Pause();
+            // reset components
+            foreach (Layer layer in Layers)
+            {
+                layer.Reset();
+            }
+        }
+
+        public void Pause()
+        {
+            Player.Pause();
+        }
+
+        public TimeSpan GetElapsedTime()
+        {
+            return Player.PlaybackPosition;
         }
 
         public float Tempo // in BPM
         {
             get; set;
+        }
+
+        public float Volume
+        {
+            get { return Player.Volume; }
+            set { Player.Volume = value; }
         }
 
         public static Random Rand = new Random();
@@ -201,8 +257,7 @@ namespace Metronome
         public bool IsPitch;
 
         public double Remainder = .0; // holds the accumulating fractional milliseconds.
-        public float Offset = 0; // in BPM
-        public double SilentIntervalRemainder = .0; // holds fractional portion of silent interval
+        public double Offset = 0; // in BPM
         protected string BaseSourceName;
 
         public Layer(BeatCell[] beat, string baseSourceName)
@@ -236,6 +291,8 @@ namespace Metronome
 
         public void SetOffset(double offset)
         {
+            Offset = offset;
+
             foreach (IStreamProvider src in AudioSources.Values)
             {
                 double current = src.GetOffset();
@@ -360,6 +417,18 @@ namespace Metronome
             }
         }
 
+        public void Reset()
+        {
+            Remainder = 0;
+            foreach (IStreamProvider src in AudioSources.Values)
+            {
+                src.Reset();
+            }
+            BaseAudioSource.Reset();
+            if (!IsPitch && BasePitchSource != default(PitchStream))
+                BasePitchSource.Reset(); 
+        }
+
         protected float volume;
         public float Volume
         {
@@ -452,7 +521,7 @@ namespace Metronome
         public Layer Layer { get; set; }
 
         // Generator variable
-        private int nSample;
+        private float nSample;
         
         public PitchStream(int sampleRate = 16000, int channel = 2)
         {
@@ -508,6 +577,30 @@ namespace Metronome
         // dictionary of frequencies and the cells they are tied to.
         public Dictionary<BeatCell, double> Frequencies = new Dictionary<BeatCell, double>();
         protected IEnumerator<double> freqEnum;
+
+        public void Reset()
+        {
+            freqEnum = Frequencies.Values.GetEnumerator();
+            BeatCollection.Enumerator = BeatCollection.GetEnumerator();
+            ByteInterval = 0;
+            previousSample = 0;
+            Gain = Volume;
+            if (Metronome.GetInstance().IsSilentInterval)
+            {
+                SetSilentInterval(Metronome.GetInstance().AudibleInterval, Metronome.GetInstance().SilentInterval);
+            }
+            if (Metronome.GetInstance().IsRandomMute)
+            {
+                randomMuteCountdown = null;
+                currentlyMuted = false;
+            }
+            if (Layer.Offset > 0)
+            {
+                SetOffset(
+                    BeatCell.ConvertFromBpm(Layer.Offset, this)
+                );
+            }
+        }
 
         // get the next frequency in the sequence
         public double GetNextFrequency()
@@ -573,7 +666,6 @@ namespace Metronome
             {
                 BeatCollection.Enumerator.MoveNext();
                 result += BeatCollection.Enumerator.Current;
-                //lastIntervalMuted = true;
                 currentlyMuted = true;
             }
             else currentlyMuted = false;
@@ -583,10 +675,10 @@ namespace Metronome
             return result;
         }
 
-        protected double SilentInterval; // remaining samples in silent interval
-        protected double AudibleInterval; // remaining samples in audible interval
-        protected int currentSlntIntvl;
-        protected bool silentIntvlSilent = false;
+        protected double SilentInterval; // total samples in silent interval
+        protected double AudibleInterval; // total samples in audible interval
+        protected int currentSlntIntvl; // samples in current interval (silent or audible)
+        protected bool silentIntvlSilent = false; // currently silent
         protected double SilentIntervalRemainder; // fractional portion
 
         public void SetSilentInterval(double audible, double silent)
@@ -602,7 +694,11 @@ namespace Metronome
         protected bool currentlyMuted = false;
         protected bool IsRandomMuted()
         {
-            if (!Metronome.GetInstance().IsRandomMute) return false;
+            if (!Metronome.GetInstance().IsRandomMute)
+            {
+                currentlyMuted = false;
+                return false;
+            }
 
             // init countdown
             if (randomMuteCountdown == null && Metronome.GetInstance().RandomMuteSeconds > 0)
@@ -669,6 +765,8 @@ namespace Metronome
         protected int previousByteInterval;
         protected int ByteInterval;
 
+        double previousSample;
+
         public int Read(float[] buffer, int offset, int count)
         {
             int outIndex = offset;
@@ -682,6 +780,10 @@ namespace Metronome
                 if (hasOffset)
                 {
                     InitialOffset -= 1;
+
+                    buffer[outIndex++] = 0;
+                    buffer[outIndex++] = 0;
+
                     if (InitialOffset == 0)
                     {
                         hasOffset = false;
@@ -704,8 +806,16 @@ namespace Metronome
                     ByteInterval = GetNextInterval();
                     if (!silentIntvlSilent && !currentlyMuted)
                     {
+                        // what should nsample be to create a smooth transition?
+                        if (previousSample != 0 && Gain != 0)
+                        {
+                            multiple = TwoPi * Frequency / waveFormat.SampleRate;
+                            nSample = Convert.ToSingle(Math.Asin(previousSample / Volume) / multiple);
+                            nSample += .5f; // seems to help
+                        }
+                        else nSample = 0;
+                            
                         Gain = Volume;
-                        nSample = 0;
                     }
                 }
 
@@ -718,7 +828,7 @@ namespace Metronome
                 {
                     // Sin Generator
                     multiple = TwoPi * Frequency / waveFormat.SampleRate;
-                    sampleValue = Gain * Math.Sin(nSample * multiple);
+                    sampleValue = previousSample = Gain * Math.Sin(nSample * multiple);
                     Gain -= .0002;
                 }
                 nSample++;
@@ -784,6 +894,28 @@ namespace Metronome
         public override WaveFormat WaveFormat
         {
             get { return sourceStream.WaveFormat; }
+        }
+
+        public void Reset()
+        {
+            BeatCollection.Enumerator = BeatCollection.GetEnumerator();
+            ByteInterval = 0;
+            if (Metronome.GetInstance().IsSilentInterval)
+            {
+                SetSilentInterval(Metronome.GetInstance().AudibleInterval, Metronome.GetInstance().SilentInterval);
+            }
+            if (Metronome.GetInstance().IsRandomMute)
+            {
+                randomMuteCountdown = null;
+                currentlyMuted = false;
+            }
+            if (Layer.Offset > 0)
+            {
+                SetOffset(
+                    BeatCell.ConvertFromBpm(Layer.Offset, this)
+                );
+            }
+            cacheIndex = 0;
         }
 
         public override long Length
@@ -852,7 +984,11 @@ namespace Metronome
         protected bool currentlyMuted = false;
         protected bool IsRandomMuted()
         {
-            if (!Metronome.GetInstance().IsRandomMute) return false;
+            if (!Metronome.GetInstance().IsRandomMute)
+            {
+                currentlyMuted = false;
+                return false;
+            }
 
             // init countdown
             if (randomMuteCountdown == null && Metronome.GetInstance().RandomMuteSeconds > 0)
@@ -919,6 +1055,7 @@ namespace Metronome
                 {
                     int subtract = initialOffset > count - bytesCopied ? count - bytesCopied : initialOffset;
                     initialOffset -= subtract;
+                    Array.Copy(new byte[subtract], 0, buffer, bytesCopied + offset, subtract);
                     bytesCopied += subtract;
 
                     if (initialOffset == 0)
@@ -1003,6 +1140,8 @@ namespace Metronome
         double Frequency { get; set; }
 
         void Dispose();
+
+        void Reset();
 
         int BytesPerSec { get; set; }
 
