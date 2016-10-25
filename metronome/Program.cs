@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Media;
 using System.Threading;
@@ -21,46 +22,51 @@ namespace Metronome
             Metronome metronome = Metronome.GetInstance();
             metronome.Tempo = 110f;
 
-            var layer1 = new Layer(new BeatCell[]
-            {
-                new BeatCell(2d)
-            }, "hihat_pedal_v5.wav");
-            layer1.Volume = .6f;
-            layer1.Pan = 1;
-            layer1.SetOffset(1d);
-            
-            var layer2 = new Layer(new BeatCell[]
-            {
-                new BeatCell(4/5d), new BeatCell(4/5d, "f4"), new BeatCell(4/5d, "a4")
-            }, "c#4");
+            // should create layers just assigning the beat code and source then add them to metronome.
+            // then parse the beat. then add sources to mixer.
 
-            var layer3 = new Layer(new BeatCell[]
-            {
-                new BeatCell(2/3d)//, new BeatCell(2/3f), new BeatCell(1/3f)
-            }, "snare_xstick_v16.wav");
-            layer3.SetOffset(1 / 3d);
-            
-            var layer4 = new Layer(new BeatCell[]
-            {
-                new BeatCell(1d), new BeatCell(2/3d), new BeatCell(1/3d)
-            }, "ride_center_v8.wav");
-            
+            var layer1 = new Layer("1,2/3,1/3", "A4");
+
+            //var layer1 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(2d)
+            //}, "hihat_pedal_v5.wav");
+            //layer1.Volume = .6f;
+            //layer1.Pan = 1;
+            //layer1.SetOffset(1d);
+            //
+            //var layer2 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(4/5d), new BeatCell(4/5d, "f4"), new BeatCell(4/5d, "a4")
+            //}, "c#4");
+            //
+            //var layer3 = new Layer(new BeatCell[]
+            //{
+            //    new BeatCell(2/3d)//, new BeatCell(2/3f), new BeatCell(1/3f)
+            //}, "snare_xstick_v16.wav");
+            //layer3.SetOffset(1 / 3d);
+            //
             //var layer4 = new Layer(new BeatCell[]
             //{
-            //    new BeatCell(4/11f)
-            //}, "G5");
+            //    new BeatCell(1d), new BeatCell(2/3d), new BeatCell(1/3d)
+            //}, "ride_center_v8.wav");
             //
-            //var layer5 = new Layer(new BeatCell[]
-            //{
-            //    new BeatCell(4/17f)
-            //}, "C5");
-            //layer5.Volume = .1f;
-            //layer5.Pan = -1;
-
+            ////var layer4 = new Layer(new BeatCell[]
+            ////{
+            ////    new BeatCell(4/11f)
+            ////}, "G5");
+            ////
+            ////var layer5 = new Layer(new BeatCell[]
+            ////{
+            ////    new BeatCell(4/17f)
+            ////}, "C5");
+            ////layer5.Volume = .1f;
+            ////layer5.Pan = -1;
+            //
             metronome.AddLayer(layer1);
-            metronome.AddLayer(layer2);
-            metronome.AddLayer(layer3);
-            metronome.AddLayer(layer4);
+            //metronome.AddLayer(layer2);
+            //metronome.AddLayer(layer3);
+            //metronome.AddLayer(layer4);
             //metronome.AddLayer(layer5);
             //metronome.SetRandomMute(50, 50);
             //metronome.SetSilentInterval(4d, 2d);
@@ -71,13 +77,9 @@ namespace Metronome
 
                 metronome.Play();
                 Console.ReadKey();
-            Console.WriteLine(metronome.GetElapsedTime());
+            //Console.WriteLine(metronome.GetElapsedTime());
                 metronome.Stop();
-                Console.ReadKey();
 
-            metronome.Play();
-            Console.WriteLine(metronome.GetElapsedTime());
-            Console.ReadKey();
             metronome.Dispose();
         }
     }
@@ -91,7 +93,7 @@ namespace Metronome
         static Metronome Instance;
 
         protected int LayerIndex = 0;
-        protected List<Layer> Layers = new List<Layer>();
+        public List<Layer> Layers = new List<Layer>();
 
         private Metronome()
         {
@@ -255,7 +257,7 @@ namespace Metronome
         public IStreamProvider BaseAudioSource;
         public PitchStream BasePitchSource; // only use one pitch source per layer
         public bool IsPitch;
-
+        public string ParsedString;
         public double Remainder = .0; // holds the accumulating fractional milliseconds.
         public double Offset = 0; // in BPM
         protected string BaseSourceName;
@@ -265,6 +267,122 @@ namespace Metronome
             SetBaseSource(baseSourceName);
             SetBeat(beat);
             Volume = .6f;
+        }
+
+        public Layer(string beat, string baseSourceName)
+        {
+            SetBaseSource(baseSourceName);
+            Parse(beat); // parse the beat code into this layer
+            Volume = .6f;
+        }
+
+        public void Parse(string beat)
+        {
+            ParsedString = beat;
+            // todo: parse the string
+            // remove comments
+            beat = Regex.Replace(beat, @"!.*?!", "");
+
+            if (beat.Contains('$'))
+            {
+                // prep single cell repeat on ref if exists
+                beat = Regex.Replace(beat, @"($[\ds]+)((\d\))", "[$1]$2");
+                //resolve beat referencing
+                while (beat.Contains('$'))
+                {
+                    string refBeat;
+                    // is a self reference?
+                    if (beat[beat.IndexOf('$') + 1].ToString().ToLower() == "s")
+                    {
+                        refBeat = Regex.Replace(ParsedString, @"!.*?!", "");
+                    }
+                    else
+                    {
+                        //get the index of the referenced beat, if exists
+                        int refIndex = int.Parse(Regex.Match(beat, @"\$[\d]+").Value.Substring(1));
+                        // does referenced beat exist?
+                        refIndex = Metronome.GetInstance().Layers.ElementAtOrDefault(refIndex) == null ? 0 : refIndex;
+                        refBeat = Regex.Replace(Metronome.GetInstance().Layers[refIndex].ParsedString, @"!.*?!", "");
+                    }
+                    // remove sound source modifiers
+                    refBeat = Regex.Replace(refBeat, @"@[a-gA-G]?[#b]?\d+", "");
+                    // remove references and their innermost nest from the referenced beat
+                    while (refBeat.Contains('$'))
+                    {
+                        if (Regex.IsMatch(refBeat, @"[[{][^[{\]}]*\$[^[{\]}]*[\]}][^\]},]*"))
+                            refBeat = Regex.Replace(refBeat, @"[[{][^[{\]}]*\$[^[{\]}]*[\]}][^\]},]*", "");
+                        else
+                            refBeat = Regex.Replace(refBeat, @"\$[\ds]+", ""); // straight up replace
+                    }
+                    // clean out empty cells
+                    refBeat = Regex.Replace(refBeat, @",,", ",");
+                    refBeat = Regex.Replace(refBeat, @",$", "");
+
+                    // replace in the refBeat
+                    var match = Regex.Match(beat, @"$[\ds]+");
+                    beat = beat.Substring(0, match.Index) + refBeat + beat.Substring(match.Index + match.Length);
+                }
+            }
+
+            // allow 'x' to be multiply operator
+            beat = beat.Replace('x', '*');
+            beat = beat.Replace('X', '*');
+
+            // handle group multiply
+            while (beat.Contains('{'))
+            {
+                var match = Regex.Match(beat, @"\{([^}]*)}([^,\]]+)"); // match the inside and the factor
+                // insert the multiplication
+                string inner = Regex.Replace(match.Groups[1].Value, @"(?=([,+-]|$))", "*" + match.Groups[2].Value);
+                // switch the multiplier to be in front of pitch modifiers
+                inner = Regex.Replace(inner, @"(@[a-gA-G]?#?\d+)(\*[\d.*/]+)", "$2$1");
+                // insert into beat
+                beat = beat.Substring(0, match.Index) + inner + beat.Substring(match.Index + match.Length);
+            }
+
+            // handle single cell repeats
+            while (Regex.IsMatch(beat, @"[^\]]\(\d+\)"))
+            {
+                var match = Regex.Match(beat, @"([.\d+\-/*]+@?[a-gA-G]#?)\((\d+)\)([\d\-+/*.]*)");
+                StringBuilder result = new StringBuilder(beat.Substring(0, match.Index));
+                //result.Append(match.Groups[1].Value, int.Parse(match.Groups[2].Value));
+                for (int i=0; i<int.Parse(match.Groups[2].Value); i++)
+                {
+                    result.Append(match.Groups[1].Value);
+                    // add comma or last term modifier
+                    if (i == int.Parse(match.Groups[2].Value) - 1)
+                    {
+                        result.Append("+0").Append(match.Groups[3].Value);
+                    }
+                    else result.Append(",");
+                }
+                // insert into beat
+                beat = result.Append(beat.Substring(match.Index + match.Length)).ToString();
+            }
+
+            // handle multi-cell repeats
+            while (beat.Contains('['))
+            {
+                var match = Regex.Match(beat, @"\[([^\]]+?)\]\(?(\d+)\)?([\d\-+/*.]*)");
+                StringBuilder result = new StringBuilder(beat.Substring(0, match.Index));
+                int itr = int.Parse(match.Groups[2].Value);
+                for (int i=0; i<itr; i++)
+                {
+                    result.Append(match.Groups[1].Value);
+                    if (i == itr - 1)
+                    {
+                        result.Append("+0").Append(match.Groups[3].Value);
+                    }
+                    else result.Append(",");
+                }
+            }
+            BeatCell[] cells = beat.Split(',').Select((x) =>
+            {
+                var match = Regex.Match(x, @"([\d.+\-/*]+)@?(.*)");
+                return new BeatCell(match.Groups[1].Value, match.Groups[2].Value);
+            }).ToArray();
+
+            SetBeat(cells);
         }
 
         public void SetBaseSource(string baseSourceName)
@@ -500,6 +618,57 @@ namespace Metronome
         {
             SourceName = sourceName;
             Bpm = beat;
+        }
+
+        public BeatCell(string beat, string sourceName = "")
+        {
+            string operators = "";
+            for (int i=0; i<beat.Length; i++)
+            {
+                if (beat[i] == '+' || beat[i] == '-' || beat[i] == '*' || beat[i] == '/')
+                    operators += beat[i];
+            }
+            double[] numbers = beat.Split(new char[] { '+', '-', '*', '/' }).Select((x)=>Convert.ToDouble(x)).ToArray();
+
+            // do mult and div
+            while (operators.IndexOfAny(new[]{ '*', '/'}) > -1)
+            {
+                int index = operators.IndexOfAny(new[] { '*', '/' });
+
+                switch (operators[index])
+                {
+                    case '*':
+                        numbers[index] *= numbers[index + 1];
+                        numbers = numbers.Take(index + 1).Concat(numbers.Skip(index + 2)).ToArray();
+                        break;
+                    case '/':
+                        numbers[index] /= numbers[index + 1];
+                        numbers = numbers.Take(index + 1).Concat(numbers.Skip(index + 2)).ToArray();
+                        break;
+                }
+                operators = operators.Remove(index, 1);
+            }
+            // do addition and subtraction
+            while (operators.IndexOfAny(new[] { '+', '-' }) > -1)
+            {
+                int index = operators.IndexOfAny(new[] { '+', '-' });
+
+                switch (operators[index])
+                {
+                    case '+':
+                        numbers[index] += numbers[index + 1];
+                        numbers = numbers.Take(index + 1).Concat(numbers.Skip(index + 2)).ToArray();
+                        break;
+                    case '-':
+                        numbers[index] -= numbers[index + 1];
+                        numbers = numbers.Take(index + 1).Concat(numbers.Skip(index + 2)).ToArray();
+                        break;
+                }
+                operators = operators.Remove(index, 1);
+            }
+
+            SourceName = sourceName;
+            Bpm = numbers[0];
         }
     }
 
