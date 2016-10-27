@@ -9,6 +9,8 @@ using System.Media;
 using System.Threading;
 using System.IO;
 using System.Diagnostics;
+using System.Runtime.Serialization;
+using System.Xml;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -19,26 +21,41 @@ namespace Metronome
     {
         static void Main(string[] args)
         {
-            Console.WriteLine(WavFileStream.GetFileByName("Crash Edge V2"));
-            Metronome metronome = Metronome.GetInstance();
-            metronome.Tempo = 210f;
+            //Metronome metronome = Metronome.GetInstance();
+            //metronome.Tempo = 100f;
+            //
+            //var layer1 = new Layer("[1,2/3,1/3]4,{$s}2/3", "A4");
+            //new Layer("1", "A5");
+            //var layer2 = new Layer("$1,2/3", WavFileStream.GetFileByName("Ride Center V2"));
+            //var layer3 = new Layer("2", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
 
-            var layer1 = new Layer("1,2/3,1/3", WavFileStream.FileNameIndex[0, 0]);
-            
-            Thread.Sleep(2000);
+            //XmlWriterSettings settings = new XmlWriterSettings() { Indent = true, OmitXmlDeclaration = true };
+            //using (XmlWriter w = XmlWriter.Create("metronome.xml", settings))
+            //    ds.WriteObject(w, metronome);
 
-
-
+            //Metronome metronome;
+            //var ds = new DataContractSerializer(typeof (Metronome));
+            ////using (Stream s = File.Create("metronome.bin"))
+            //using (Stream s = File.OpenRead("metronome.bin"))
+            //using (var w = XmlDictionaryReader.CreateBinaryReader(s, XmlDictionaryReaderQuotas.Max))
+            ////using (var w = XmlDictionaryWriter.CreateBinaryWriter(s))
+            //{
+            //    //ds.WriteObject(w, metronome);
+            //    metronome = (Metronome)ds.ReadObject(w);
+            //}
+            Metronome.Load("metronome.bin");
+            //Thread.Sleep(2000);
+            var metronome = Metronome.GetInstance();
             metronome.Play();
             Console.ReadKey();
-            //Console.WriteLine(metronome.GetElapsedTime());
             metronome.Stop();
 
             metronome.Dispose();
         }
     }
 
-
+    
+    [DataContract]
     public class Metronome : IDisposable
     {
         protected MixingSampleProvider Mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(16000, 2));
@@ -46,7 +63,7 @@ namespace Metronome
 
         static Metronome Instance;
 
-        protected int LayerIndex = 0;
+        [DataMember]
         public List<Layer> Layers = new List<Layer>();
 
         private Metronome()
@@ -62,6 +79,22 @@ namespace Metronome
         }
 
         public void AddLayer(Layer layer)
+        {
+            // add sources to mixer
+            AddSourcesFromLayer(layer);
+
+            Layers.Add(layer);
+
+            // re-parse all other layers that reference this beat
+            int layerId = Layers.Count - 1;
+            var reparse = Layers.Where(x => x != layer && x.ParsedString.Contains($"${layerId}"));
+            foreach (Layer l in reparse)
+            {
+                l.Parse(l.ParsedString);
+            }
+        }
+
+        protected void AddSourcesFromLayer(Layer layer)
         {
             // add sources to mixer
             foreach (IStreamProvider src in layer.AudioSources.Values)
@@ -96,16 +129,6 @@ namespace Metronome
 
                 if (!layer.IsPitch && layer.BasePitchSource != default(PitchStream))
                     layer.BasePitchSource.SetSilentInterval(AudibleInterval, SilentInterval);
-            }
-
-            Layers.Add(layer);
-
-            // re-parse all other layers that reference this beat
-            int layerId = Layers.Count - 1;
-            var reparse = Layers.Where(x => x != layer && x.ParsedString.Contains($"${layerId}"));
-            foreach (Layer l in reparse)
-            {
-                l.Parse(l.ParsedString);
             }
         }
 
@@ -149,11 +172,13 @@ namespace Metronome
             return Player.PlaybackPosition;
         }
 
+        [DataMember]
         public float Tempo // in BPM
         {
             get; set;
         }
 
+        [DataMember]
         public float Volume
         {
             get { return Player.Volume; }
@@ -162,10 +187,10 @@ namespace Metronome
 
         public static Random Rand = new Random();
 
-        public bool IsRandomMute = false;
+        [DataMember]public bool IsRandomMute = false;
 
-        public int RandomMutePercent;
-        public int RandomMuteSeconds = 0;
+        [DataMember]public int RandomMutePercent;
+        [DataMember]public int RandomMuteSeconds = 0;
 
         public void SetRandomMute(int percent, int seconds = 0)
         {
@@ -174,10 +199,10 @@ namespace Metronome
             RandomMuteSeconds = seconds;
         }
 
-        public bool IsSilentInterval = false;
+        [DataMember]public bool IsSilentInterval = false;
 
-        public double AudibleInterval;
-        public double SilentInterval;
+        [DataMember]public double AudibleInterval;
+        [DataMember]public double SilentInterval;
 
         public void SetSilentInterval(double audible, double silent)
         {
@@ -204,6 +229,45 @@ namespace Metronome
                 IsSilentInterval = false;
         }
 
+        static public void Save(string name)
+        {
+            var ds = new DataContractSerializer(typeof(Metronome));
+            using (Stream s = File.Create($"{name}.bin"))
+            using (var w = XmlDictionaryWriter.CreateBinaryWriter(s))
+            {
+                ds.WriteObject(w, GetInstance());
+            }
+        }
+
+        static public void Load(string fileName)
+        {
+            var ds = new DataContractSerializer(typeof(Metronome));
+            using (Stream s = File.OpenRead(fileName))
+            using (var w = XmlDictionaryReader.CreateBinaryReader(s, XmlDictionaryReaderQuotas.Max))
+            {
+                ds.ReadObject(w);
+            }
+        }
+
+        [OnDeserializing]
+        void BeforeDeserialization(StreamingContext sc)
+        {
+            Instance = this;
+            Mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(16000, 2));
+            Player = new DirectSoundOut();
+            Player.Init(Mixer);
+        }
+
+        [OnDeserialized]
+        void Deserialized(StreamingContext sc)
+        {
+            foreach(Layer layer in Layers)
+            {
+                layer.Deserialize();
+                AddSourcesFromLayer(layer);
+            }
+        }
+
         public void Dispose()
         {
             Player.Dispose();
@@ -212,33 +276,27 @@ namespace Metronome
     }
 
 
+    [DataContract]
     public class Layer : IDisposable
     {
-        protected List<BeatCell> Beat = new List<BeatCell>();
+        protected List<BeatCell> Beat;
 
         public Dictionary<string, IStreamProvider> AudioSources = new Dictionary<string, IStreamProvider>();
         public IStreamProvider BaseAudioSource;
         public PitchStream BasePitchSource; // only use one pitch source per layer
-        public bool IsPitch;
-        public string ParsedString;
-        public double Remainder = .0; // holds the accumulating fractional milliseconds.
-        public double Offset = 0; // in BPM
-        protected string BaseSourceName;
+        [DataMember]public bool IsPitch;
+        [DataMember]public string ParsedString;
+        [DataMember]public double Remainder = .0; // holds the accumulating fractional milliseconds.
+        [DataMember]public double Offset = 0; // in BPM
+        [DataMember]protected string BaseSourceName;
 
-        //public Layer(BeatCell[] beat, string baseSourceName)
-        //{
-        //    SetBaseSource(baseSourceName);
-        //    SetBeat(beat);
-        //    Volume = .6f;
-        //    // add to met
-        //    Metronome.GetInstance().AddLayer(this);
-        //}
-
-        public Layer(string beat, string baseSourceName, string offset = "")
+        public Layer(string beat, string baseSourceName, string offset = "", float pan = 0f, float volume = .6f)
         {
             SetBaseSource(baseSourceName);
             Parse(beat); // parse the beat code into this layer
-            Volume = .6f;
+            Volume = volume;
+            if (pan != 0f)
+                Pan = pan;
             if (offset != "")
                 SetOffset(offset);
             Metronome.GetInstance().AddLayer(this);
@@ -247,28 +305,27 @@ namespace Metronome
         public void Parse(string beat)
         {
             ParsedString = beat;
-            // todo: parse the string
             // remove comments
             beat = Regex.Replace(beat, @"!.*?!", "");
 
             if (beat.Contains('$'))
             {
                 // prep single cell repeat on ref if exists
-                beat = Regex.Replace(beat, @"($[\ds]+)((\d\))", "[$1]$2");
+                beat = Regex.Replace(beat, @"($[\ds]+)(\(\d\))", "[$1]$2");
                 //resolve beat referencing
                 while (beat.Contains('$'))
                 {
                     string refBeat;
                     // is a self reference?
                     if (beat[beat.IndexOf('$') + 1].ToString().ToLower() == "s" ||
-                        Regex.Match(beat, @"$(\d+)").Groups[1].Value == Metronome.GetInstance().Layers.Count.ToString())
+                        Regex.Match(beat, @"$(\d+)").Groups[1].Value == (Metronome.GetInstance().Layers.Count + 1).ToString())
                     {
                         refBeat = Regex.Replace(ParsedString, @"!.*?!", "");
                     }
                     else
                     {
                         //get the index of the referenced beat, if exists
-                        int refIndex = int.Parse(Regex.Match(beat, @"\$[\d]+").Value.Substring(1));
+                        int refIndex = int.Parse(Regex.Match(beat, @"\$[\d]+").Value.Substring(1)) - 1;
                         // does referenced beat exist?
                         refIndex = Metronome.GetInstance().Layers.ElementAtOrDefault(refIndex) == null ? 0 : refIndex;
                         refBeat = Regex.Replace(Metronome.GetInstance().Layers[refIndex].ParsedString, @"!.*?!", "");
@@ -289,7 +346,7 @@ namespace Metronome
                     refBeat = Regex.Replace(refBeat, @",$", "");
 
                     // replace in the refBeat
-                    var match = Regex.Match(beat, @"$[\ds]+");
+                    var match = Regex.Match(beat, @"\$[\ds]+");
                     beat = beat.Substring(0, match.Index) + refBeat + beat.Substring(match.Index + match.Length);
                 }
             }
@@ -303,7 +360,7 @@ namespace Metronome
             {
                 var match = Regex.Match(beat, @"\{([^}]*)}([^,\]]+)"); // match the inside and the factor
                 // insert the multiplication
-                string inner = Regex.Replace(match.Groups[1].Value, @"(?=([,+-]|$))", "*" + match.Groups[2].Value);
+                string inner = Regex.Replace(match.Groups[1].Value, @"(?<!\]\d+)(?=([\],+-]|$))", "*" + match.Groups[2].Value);
                 // switch the multiplier to be in front of pitch modifiers
                 inner = Regex.Replace(inner, @"(@[a-gA-G]?#?\d+)(\*[\d.*/]+)", "$2$1");
                 // insert into beat
@@ -332,7 +389,7 @@ namespace Metronome
             // handle multi-cell repeats
             while (beat.Contains('['))
             {
-                var match = Regex.Match(beat, @"\[([^\]]+?)\]\(?(\d+)\)?([\d\-+/*.]*)");
+                var match = Regex.Match(beat, @"\[([^\][]+?)\]\(?(\d+)\)?([\d\-+/*.]*)");
                 StringBuilder result = new StringBuilder(beat.Substring(0, match.Index));
                 int itr = int.Parse(match.Groups[2].Value);
                 for (int i = 0; i < itr; i++)
@@ -353,7 +410,7 @@ namespace Metronome
                 if (IsPitch) // use source modifier as pitch or as a wav file reference
                     return new BeatCell(match.Groups[1].Value, source);
                 else
-                    return new BeatCell(match.Groups[1].Value, source != "" ? WavFileStream.FileNameIndex[int.Parse(source), 0] : "");
+                    return new BeatCell(match.Groups[1].Value, source != "" ? WavFileStream.FileNameIndex[int.Parse(source) - 1, 0] : "");
             }).ToArray();
 
             SetBeat(cells);
@@ -527,12 +584,13 @@ namespace Metronome
                 BasePitchSource.Reset();
         }
 
-        protected float volume;
+        [DataMember]protected float volume;
         public float Volume
         {
             get { return volume; }
             set
             {
+                volume = value;
                 foreach (IStreamProvider src in AudioSources.Values) src.Volume = value;
                 if (IsPitch) BasePitchSource.Volume = value;
                 else
@@ -545,10 +603,16 @@ namespace Metronome
             }
         }
 
+        [DataMember]protected float pan;
         public float Pan
         {
+            get
+            {
+                return pan;
+            }
             set
             {
+                pan = value;
                 foreach (IStreamProvider src in AudioSources.Values) src.Pan = value;
                 if (IsPitch) BasePitchSource.Pan = value;
                 else
@@ -558,6 +622,15 @@ namespace Metronome
                     BaseAudioSource.Pan = value;
                 }
             }
+        }
+
+        //[OnDeserialized]
+        public void Deserialize()
+        {
+            AudioSources = new Dictionary<string, IStreamProvider>();
+            SetBaseSource(BaseSourceName);
+            Parse(ParsedString);
+            Volume = volume;
         }
 
         public void Dispose()
@@ -591,6 +664,7 @@ namespace Metronome
         static public double ConvertFromBpm(double bpm, IStreamProvider src)
         {
             double result = bpm * (60d / Metronome.GetInstance().Tempo) * src.WaveFormat.SampleRate;
+            
             return result;
         }
 
@@ -826,7 +900,7 @@ namespace Metronome
             else currentlyMuted = false;
 
             previousByteInterval = result;
-
+            
             return result;
         }
 
@@ -1029,9 +1103,17 @@ namespace Metronome
             Channel = new WaveChannel32(this);
             BytesPerSec = sourceStream.WaveFormat.AverageBytesPerSecond;
 
-            MemoryStream ms = new MemoryStream();
-            sourceStream.CopyTo(ms);
-            cache = ms.GetBuffer();
+            // check if in cache store
+            if (CachedStreams.ContainsKey(fileName)) {
+                cache = CachedStreams[fileName];
+            }
+            else // add to cache
+            {
+                MemoryStream ms = new MemoryStream();
+                sourceStream.CopyTo(ms);
+                cache = ms.GetBuffer();
+                CachedStreams.Add(fileName, cache);
+            }
         }
 
         public double Volume
@@ -1288,6 +1370,9 @@ namespace Metronome
             return flat[Array.IndexOf(flat, name) - 1];
         }
 
+        // store streams that have been cached in here
+        static protected Dictionary<string, byte[]> CachedStreams = new Dictionary<string, byte[]>();
+
         static public string[,] FileNameIndex = new string[,]
         {
             { "wav/crash1_edge_v5.wav", "Crash Edge V1" },
@@ -1399,7 +1484,7 @@ namespace Metronome
                 if (i == Beats.Count()) i = 0; // loop over collection
 
                 double bpm = Beats[i];//BeatCell.ConvertFromBpm(Beats[i], BytesPerSec);
-
+                
                 int whole = (int)bpm;
 
                 Layer.Remainder += bpm - whole; // add to layer's remainder accumulator
@@ -1411,7 +1496,7 @@ namespace Metronome
                 }
 
                 if (isWav) whole *= 4; // multiply for wav files. 4 bytes per sample
-
+                
                 yield return whole;
             }
         }
