@@ -21,21 +21,21 @@ namespace Pronome
     {
         static void Main(string[] args)
         {
-            //Metronome metronome = Metronome.GetInstance();
-            //metronome.Tempo = 100f;
+            // todo: HiHat open and close muting
+            // todo: @0 silent beats.
+
+            Metronome metronome = Metronome.GetInstance();
+            metronome.Tempo = 100f;
             ////
             //var layer1 = new Layer("[1,2/3,1/3]4,{$s}2/3", "A4");
             //new Layer("1", "A5");
-            //var layer2 = new Layer("1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V2"));
-            //var layer3 = new Layer("2", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
+            var layer2 = new Layer("1@1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V3"));
+            var layer3 = new Layer("2", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
 
-            Metronome.Load("metronome");
-            var metronome = Metronome.GetInstance();
+            //Metronome.Load("metronome");
+            //var metronome = Metronome.GetInstance();
             metronome.Play();
-            Thread.Sleep(3000);
-            metronome.Layers[0].ToggleMute();
-            Thread.Sleep(3000);
-            metronome.Layers[0].ToggleMute();
+            
             Console.ReadKey();
             metronome.Stop();
 
@@ -221,7 +221,7 @@ namespace Pronome
         static public void Save(string name)
         {
             var ds = new DataContractSerializer(typeof(Metronome));
-            using (Stream s = File.Create($"saves/{name}.bin"))
+            using (Stream s = File.Create($"saves/{name}.beat"))
             using (var w = XmlDictionaryWriter.CreateBinaryWriter(s))
             {
                 ds.WriteObject(w, GetInstance());
@@ -231,7 +231,7 @@ namespace Pronome
         static public void Load(string fileName)
         {
             var ds = new DataContractSerializer(typeof(Metronome));
-            using (Stream s = File.OpenRead($"saves/{fileName}.bin"))
+            using (Stream s = File.OpenRead($"saves/{fileName}.beat"))
             using (var w = XmlDictionaryReader.CreateBinaryReader(s, XmlDictionaryReaderQuotas.Max))
             {
                 ds.ReadObject(w);
@@ -440,10 +440,20 @@ namespace Pronome
             {
                 var match = Regex.Match(x, @"([\d.+\-/*]+)@?(.*)");
                 string source = match.Groups[2].Value;
-                if (IsPitch) // use source modifier as pitch or as a wav file reference
+
+                if (Regex.IsMatch(source, @"^[a-gA-G][#b]?\d{1,2}"))
+                {
+                    // is a pitch reference
                     return new BeatCell(match.Groups[1].Value, source);
-                else
-                    return new BeatCell(match.Groups[1].Value, source != "" ? WavFileStream.FileNameIndex[int.Parse(source) - 1, 0] : "");
+                }
+                else // ref is a plain number. use as pitch or wav file depending on base source.
+                {
+                    if (IsPitch)
+                        return new BeatCell(match.Groups[1].Value, source);
+                    else
+                        return new BeatCell(match.Groups[1].Value, source != "" ? WavFileStream.FileNameIndex[int.Parse(source), 0] : "");
+                }
+
             }).ToArray();
 
             SetBeat(cells);
@@ -530,8 +540,8 @@ namespace Pronome
                             BasePitchSource.BaseFrequency = PitchStream.ConvertFromSymbol(beat[i].SourceName); // make the base freq
                             BasePitchSource.Layer = this;
                         }
+                        else BasePitchSource.SetFrequency(beat[i].SourceName, beat[i]);
                         beat[i].AudioSource = BasePitchSource;
-                        BasePitchSource.SetFrequency(beat[i].SourceName, beat[i]);
                     }
                     else
                     {
@@ -674,6 +684,8 @@ namespace Pronome
         public string SourceName;
         public Layer Layer;
         public IStreamProvider AudioSource;
+        public bool IsHiHatClosed = false;
+        public bool IsHiHatOpen = false;
 
         public void SetBeatValue()
         {
@@ -688,16 +700,41 @@ namespace Pronome
             return result;
         }
 
-        public BeatCell(double beat, string sourceName = "") // value of beat, ex. "1/3"
-        {
-            SourceName = sourceName;
-            Bpm = beat;
-        }
+        //public BeatCell(double beat, string sourceName = "") // value of beat, ex. "1/3"
+        //{
+        //    SourceName = sourceName;
+        //    Bpm = beat;
+        //}
 
         public BeatCell(string beat, string sourceName = "")
         {
             SourceName = sourceName;
             Bpm = Parse(beat);
+
+            // is it a hihat closed or open sound?
+            if (new string[] {
+                "wav/hihat_half_center_v4.wav",
+                "wav/hihat_half_center_v7.wav",
+                "wav/hihat_half_center_v10.wav",
+                "wav/hihat_half_edge_v7.wav",
+                "wav/hihat_half_edge_v10.wav",
+                "wav/hihat_open_center_v4.wav",
+                "wav/hihat_open_center_v7.wav",
+                "wav/hihat_open_center_v10.wav",
+                "wav/hihat_open_edge_v7.wav",
+                "wav/hihat_open_edge_v10.wav"
+            }.Contains(sourceName))
+            {
+                IsHiHatOpen = true;
+            }
+            else if (new string[]
+            {
+                "wav/hihat_pedal_v3.wav",
+                "wav/hihat_pedal_v5.wav"
+            }.Contains(sourceName))
+            {
+                IsHiHatClosed = true;
+            }
         }
 
         static public double Parse(string str)
@@ -823,6 +860,7 @@ namespace Pronome
         }
 
         // dictionary of frequencies and the cells they are tied to.
+        //public List<KeyValuePair<BeatCell, double>> Frequencies = new List<KeyValuePair<BeatCell, double>>();
         public Dictionary<BeatCell, double> Frequencies = new Dictionary<BeatCell, double>();
         protected IEnumerator<double> freqEnum;
 
@@ -1053,7 +1091,7 @@ namespace Pronome
 
                     Frequency = GetNextFrequency();
                     ByteInterval = GetNextInterval();
-                    if (!silentIntvlSilent && !currentlyMuted)
+                    if (!silentIntvlSilent && !currentlyMuted && Frequency != 0)
                     {
                         // what should nsample be to create a smooth transition?
                         if (previousSample != 0 && Gain != 0)
@@ -1128,9 +1166,17 @@ namespace Pronome
 
         public WavFileStream(string fileName)
         {
-            sourceStream = new WaveFileReader(fileName);
-            Channel = new WaveChannel32(this);
+            if (fileName == "silentbeat")
+            {
+                sourceStream = new WaveFileReader(FileNameIndex[1,0]);
+            }
+            else
+            {
+                sourceStream = new WaveFileReader(fileName);
+            }
+
             BytesPerSec = sourceStream.WaveFormat.AverageBytesPerSecond;
+            Channel = new WaveChannel32(this);
 
             // check if in cache store
             if (CachedStreams.ContainsKey(fileName)) {
@@ -1297,6 +1343,8 @@ namespace Pronome
         protected int currentSlntIntvl;
         protected bool silentIntvlSilent = false;
         protected double SilentIntervalRemainder; // fractional portion
+        protected bool IsHiHatOpen = false; // is this an open hihat sound?
+        protected bool IsHiHatClosed = false; // is this a pedal down hihat sound.
 
         public void SetSilentInterval(double audible, double silent)
         {
@@ -1408,10 +1456,11 @@ namespace Pronome
         }
 
         // store streams that have been cached in here
-        static protected Dictionary<string, byte[]> CachedStreams = new Dictionary<string, byte[]>();
+        static protected Dictionary<string, byte[]> CachedStreams = new Dictionary<string, byte[]>() { { "silentbeat", new byte[4] } };
 
         static public string[,] FileNameIndex = new string[,]
         {
+            { "silentbeat", "silentbeat" }, // is cached as an empty sample
             { "wav/crash1_edge_v5.wav", "Crash Edge V1" },
             { "wav/crash1_edge_v8.wav", "Crash Edge V2" },
             { "wav/crash1_edge_v10.wav", "Crash Edge V3" },
