@@ -15,7 +15,7 @@ using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
 
-namespace Metronome
+namespace Pronome
 {
     class Program
     {
@@ -23,30 +23,19 @@ namespace Metronome
         {
             //Metronome metronome = Metronome.GetInstance();
             //metronome.Tempo = 100f;
-            //
+            ////
             //var layer1 = new Layer("[1,2/3,1/3]4,{$s}2/3", "A4");
             //new Layer("1", "A5");
-            //var layer2 = new Layer("$1,2/3", WavFileStream.GetFileByName("Ride Center V2"));
+            //var layer2 = new Layer("1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V2"));
             //var layer3 = new Layer("2", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
 
-            //XmlWriterSettings settings = new XmlWriterSettings() { Indent = true, OmitXmlDeclaration = true };
-            //using (XmlWriter w = XmlWriter.Create("metronome.xml", settings))
-            //    ds.WriteObject(w, metronome);
-
-            //Metronome metronome;
-            //var ds = new DataContractSerializer(typeof (Metronome));
-            ////using (Stream s = File.Create("metronome.bin"))
-            //using (Stream s = File.OpenRead("metronome.bin"))
-            //using (var w = XmlDictionaryReader.CreateBinaryReader(s, XmlDictionaryReaderQuotas.Max))
-            ////using (var w = XmlDictionaryWriter.CreateBinaryWriter(s))
-            //{
-            //    //ds.WriteObject(w, metronome);
-            //    metronome = (Metronome)ds.ReadObject(w);
-            //}
-            Metronome.Load("metronome.bin");
-            //Thread.Sleep(2000);
+            Metronome.Load("metronome");
             var metronome = Metronome.GetInstance();
             metronome.Play();
+            Thread.Sleep(3000);
+            metronome.Layers[0].ToggleMute();
+            Thread.Sleep(3000);
+            metronome.Layers[0].ToggleMute();
             Console.ReadKey();
             metronome.Stop();
 
@@ -108,7 +97,7 @@ namespace Metronome
                     Mixer.AddMixerInput(((WavFileStream)src).Channel);
                 }
             }
-
+            
             if (layer.IsPitch) // if base source is a pitch stream.
                 Mixer.AddMixerInput(layer.BasePitchSource);
             else
@@ -232,7 +221,7 @@ namespace Metronome
         static public void Save(string name)
         {
             var ds = new DataContractSerializer(typeof(Metronome));
-            using (Stream s = File.Create($"{name}.bin"))
+            using (Stream s = File.Create($"saves/{name}.bin"))
             using (var w = XmlDictionaryWriter.CreateBinaryWriter(s))
             {
                 ds.WriteObject(w, GetInstance());
@@ -242,7 +231,7 @@ namespace Metronome
         static public void Load(string fileName)
         {
             var ds = new DataContractSerializer(typeof(Metronome));
-            using (Stream s = File.OpenRead(fileName))
+            using (Stream s = File.OpenRead($"saves/{fileName}.bin"))
             using (var w = XmlDictionaryReader.CreateBinaryReader(s, XmlDictionaryReaderQuotas.Max))
             {
                 ds.ReadObject(w);
@@ -289,6 +278,50 @@ namespace Metronome
         [DataMember]public double Remainder = .0; // holds the accumulating fractional milliseconds.
         [DataMember]public double Offset = 0; // in BPM
         [DataMember]protected string BaseSourceName;
+        public bool IsMuted = false;
+        public bool IsSoloed = false;
+        public static bool SoloGroupEngaged = false; // is there a solo group?
+        //protected static List<Layer> SoloedLayers = new List<Layer>(); // holds layers in the soloed group
+
+        [DataMember]protected float volume;
+        public float Volume
+        {
+            get { return volume; }
+            set
+            {
+                volume = value;
+                foreach (IStreamProvider src in AudioSources.Values) src.Volume = value;
+                if (IsPitch) BasePitchSource.Volume = value;
+                else
+                {
+                    // is there a pitch source?
+                    if (BasePitchSource != default(PitchStream))
+                        BasePitchSource.Volume = value;
+                    BaseAudioSource.Volume = value;
+                }
+            }
+        }
+
+        [DataMember]protected float pan;
+        public float Pan
+        {
+            get
+            {
+                return pan;
+            }
+            set
+            {
+                pan = value;
+                foreach (IStreamProvider src in AudioSources.Values) src.Pan = value;
+                if (IsPitch) BasePitchSource.Pan = value;
+                else
+                {
+                    if (BasePitchSource != default(PitchStream))
+                        BasePitchSource.Pan = value;
+                    BaseAudioSource.Pan = value;
+                }
+            }
+        }
 
         public Layer(string beat, string baseSourceName, string offset = "", float pan = 0f, float volume = .6f)
         {
@@ -318,7 +351,7 @@ namespace Metronome
                     string refBeat;
                     // is a self reference?
                     if (beat[beat.IndexOf('$') + 1].ToString().ToLower() == "s" ||
-                        Regex.Match(beat, @"$(\d+)").Groups[1].Value == (Metronome.GetInstance().Layers.Count + 1).ToString())
+                        Regex.Match(beat, @"\$(\d+)").Groups[1].Value == (Metronome.GetInstance().Layers.Count + 1).ToString())
                     {
                         refBeat = Regex.Replace(ParsedString, @"!.*?!", "");
                     }
@@ -339,7 +372,7 @@ namespace Metronome
                         if (Regex.IsMatch(refBeat, @"[[{][^[{\]}]*\$[^[{\]}]*[\]}][^\]},]*"))
                             refBeat = Regex.Replace(refBeat, @"[[{][^[{\]}]*\$[^[{\]}]*[\]}][^\]},]*", "");
                         else
-                            refBeat = Regex.Replace(refBeat, @"\$[\ds]+", ""); // straight up replace
+                            refBeat = Regex.Replace(refBeat, @"\$[\ds]+,?", ""); // straight up replace
                     }
                     // clean out empty cells
                     refBeat = Regex.Replace(refBeat, @",,", ",");
@@ -584,52 +617,39 @@ namespace Metronome
                 BasePitchSource.Reset();
         }
 
-        [DataMember]protected float volume;
-        public float Volume
+        public void ToggleMute()
         {
-            get { return volume; }
-            set
+            IsMuted = !IsMuted;
+        }
+
+        public void ToggleSoloGroup()
+        {
+            if (IsSoloed)
             {
-                volume = value;
-                foreach (IStreamProvider src in AudioSources.Values) src.Volume = value;
-                if (IsPitch) BasePitchSource.Volume = value;
-                else
+                // unsolo and close the solo group if this was the only member
+                IsSoloed = false;
+                if (Metronome.GetInstance().Layers.Where(x => x.IsSoloed == true).Count() == 0)
                 {
-                    // is there a pitch source?
-                    if (BasePitchSource != default(PitchStream))
-                        BasePitchSource.Volume = value;
-                    BaseAudioSource.Volume = value;
+                    SoloGroupEngaged = false;
                 }
+            }
+            else
+            {
+                // add this layer to solo group. all layers not in group will be muted.
+                IsSoloed = true;
+                SoloGroupEngaged = true;
             }
         }
 
-        [DataMember]protected float pan;
-        public float Pan
-        {
-            get
-            {
-                return pan;
-            }
-            set
-            {
-                pan = value;
-                foreach (IStreamProvider src in AudioSources.Values) src.Pan = value;
-                if (IsPitch) BasePitchSource.Pan = value;
-                else
-                {
-                    if (BasePitchSource != default(PitchStream))
-                        BasePitchSource.Pan = value;
-                    BaseAudioSource.Pan = value;
-                }
-            }
-        }
-
-        //[OnDeserialized]
         public void Deserialize()
         {
             AudioSources = new Dictionary<string, IStreamProvider>();
             SetBaseSource(BaseSourceName);
             Parse(ParsedString);
+            if (Offset != 0)
+                SetOffset(Offset);
+            if (pan != 0)
+                Pan = pan;
             Volume = volume;
         }
 
@@ -1055,9 +1075,18 @@ namespace Metronome
                 }
                 else
                 {
-                    // Sin Generator
-                    multiple = TwoPi * Frequency / waveFormat.SampleRate;
-                    sampleValue = previousSample = Gain * Math.Sin(nSample * multiple);
+                    // check for muting
+                    if (Layer.IsMuted || Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed)
+                    {
+                        nSample = 0;
+                        previousSample = sampleValue = 0;
+                    }
+                    else
+                    {
+                        // Sin Generator
+                        multiple = TwoPi * Frequency / waveFormat.SampleRate;
+                        sampleValue = previousSample = Gain * Math.Sin(nSample * multiple);
+                    }
                     Gain -= .0002;
                 }
                 nSample++;
@@ -1338,13 +1367,21 @@ namespace Metronome
                     // dont read more than cache size
                     if (chunkSize > cacheSize - cacheIndex)
                     {
-                        chunkSize = cacheSize - cacheIndex;// - (offset + bytesCopied);
-                        //chunkSize -= chunkSize % 4;
+                        chunkSize = cacheSize - cacheIndex;
                     }
 
                     if (chunkSize >= 4)
                     {
-                        Array.Copy(cache, cacheIndex, buffer, offset + bytesCopied, chunkSize);
+                        // check for muting
+                        if (Layer.IsMuted || Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed)
+                        {
+                            Array.Copy(new byte[buffer.Length], 0, buffer, offset + bytesCopied, chunkSize); // muted
+                        }
+                        else
+                        {
+                            Array.Copy(cache, cacheIndex, buffer, offset + bytesCopied, chunkSize);
+                        }
+
                         cacheIndex += chunkSize;
                         bytesCopied += chunkSize;
                         ByteInterval -= chunkSize;
@@ -1496,7 +1533,7 @@ namespace Metronome
                 }
 
                 if (isWav) whole *= 4; // multiply for wav files. 4 bytes per sample
-                
+
                 yield return whole;
             }
         }
