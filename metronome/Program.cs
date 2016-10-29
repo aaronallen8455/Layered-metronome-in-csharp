@@ -29,8 +29,8 @@ namespace Pronome
             ////
             //var layer1 = new Layer("[1,2/3,1/3]4,{$s}2/3", "A4");
             //new Layer("1", "A5");
-            var layer2 = new Layer("1@1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V3"));
-            var layer3 = new Layer("2", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
+            var layer2 = new Layer("1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V3"));
+            var layer3 = new Layer("2,1/3@19", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
 
             //Metronome.Load("metronome");
             //var metronome = Metronome.GetInstance();
@@ -326,12 +326,12 @@ namespace Pronome
         public Layer(string beat, string baseSourceName, string offset = "", float pan = 0f, float volume = .6f)
         {
             SetBaseSource(baseSourceName);
+            if (offset != "")
+                SetOffset(offset);
             Parse(beat); // parse the beat code into this layer
             Volume = volume;
             if (pan != 0f)
                 Pan = pan;
-            if (offset != "")
-                SetOffset(offset);
             Metronome.GetInstance().AddLayer(this);
         }
 
@@ -521,10 +521,14 @@ namespace Pronome
                 beat[i].Layer = this;
                 if (beat[i].SourceName != string.Empty && beat[i].SourceName.Count() > 5)
                 {
-                    var wavStream = new WavFileStream(beat[i].SourceName);
-                    wavStream.Layer = this;
-                    beat[i].AudioSource = wavStream;
-                    AudioSources.Add(beat[i].SourceName, wavStream);
+                    // should cells of the same source use the same audiosource instead of creating new source each time? No
+                    //if (!AudioSources.ContainsKey(beat[i].SourceName))
+                    //{
+                        var wavStream = new WavFileStream(beat[i].SourceName);
+                        wavStream.Layer = this;
+                        AudioSources.Add(beat[i].SourceName, wavStream);
+                    //}
+                    beat[i].AudioSource = AudioSources[beat[i].SourceName];
                 }
                 else
                 {
@@ -551,6 +555,9 @@ namespace Pronome
                             BasePitchSource.SetFrequency(BasePitchSource.BaseFrequency.ToString(), beat[i]);
                         }
                         beat[i].AudioSource = BaseAudioSource;
+                        // is hihat sound?
+                        if (BeatCell.HiHatClosedFileNames.Contains(BaseSourceName)) beat[i].IsHiHatClosed = true;
+                        else if (BeatCell.HiHatOpenFileNames.Contains(BaseSourceName)) beat[i].IsHiHatOpen = true;
                     }
                 }
                 // set beat's value based on tempo and bytes/sec
@@ -558,6 +565,32 @@ namespace Pronome
             }
 
             Beat = beat.ToList();
+
+            // match hihat close sounds to preceding hihat open sound
+            if (Beat.Count(x => x.IsHiHatClosed) != 0 && Beat.Count(x => x.IsHiHatOpen) != 0)
+            {
+                for (int i=0; i<Beat.Count; i++)
+                {
+                    if (Beat[i].IsHiHatOpen)
+                    {
+                        double accumulator = 0;
+                        // find nearest following close hihat sound.
+                        for (int p=i+1; p!=i; p++)
+                        {
+                            if (p == Beat.Count) { p = -1; continue; } // back to start
+            
+                            if (Beat[p].IsHiHatClosed)
+                            {
+                                // set the duration for the open hihat sound.
+                                Beat[i].hhDuration = accumulator + Beat[i].Bpm;
+                                accumulator = 0;
+                                break;
+                            }
+                            else accumulator += Beat[p].Bpm;
+                        }
+                    }
+                }
+            }
 
             SetBeatCollectionOnSources();
         }
@@ -570,17 +603,19 @@ namespace Pronome
             for (int i = 0; i < Beat.Count; i++)
             {
                 List<double> cells = new List<double>();
+                List<double> hhDurations = new List<double>(); // open hihat sound durations.
                 double accumulator = 0;
                 // Once per audio source
                 if (completed.Contains(Beat[i].AudioSource)) continue;
                 // if selected beat is not first in cycle, set it's offset
                 if (i != 0)
                 {
-                    double offsetAccumulate = 0f;
+                    double offsetAccumulate = Offset;
                     for (int p = 0; p < i; p++)
                     {
                         offsetAccumulate += Beat[p].Bpm;
                     }
+
                     Beat[i].AudioSource.SetOffset(BeatCell.ConvertFromBpm(offsetAccumulate, Beat[i].AudioSource));
                 }
                 // iterate over beats starting with current one
@@ -595,23 +630,24 @@ namespace Pronome
                         // add accumulator to previous element in list
                         if (cells.Count != 0)
                         {
-                            cells[cells.Count - 1] += accumulator;//BeatCell.ConvertFromBpm(accumulator, Beat[i].AudioSource);
+                            cells[cells.Count - 1] += accumulator;
                             accumulator = 0f;
                         }
                         cells.Add(Beat[p].Bpm);
+                        hhDurations.Add(Beat[p].hhDuration);
                     }
                     else accumulator += Beat[p].Bpm;
 
                     // job done if current beat is one before the outer beat.
                     if (p == i - 1 || (i == 0 && p == Beat.Count - 1))
                     {
-                        cells[cells.Count - 1] += accumulator;//BeatCell.ConvertFromBpm(accumulator, Beat[i].AudioSource);
+                        cells[cells.Count - 1] += accumulator;
                         break;
                     }
                 }
                 completed.Add(Beat[i].AudioSource);
 
-                Beat[i].AudioSource.BeatCollection = new SourceBeatCollection(this, cells.ToArray(), Beat[i].AudioSource);
+                Beat[i].AudioSource.BeatCollection = new SourceBeatCollection(this, cells.ToArray(), Beat[i].AudioSource, hhDurations.ToArray());
             }
         }
 
@@ -686,6 +722,7 @@ namespace Pronome
         public IStreamProvider AudioSource;
         public bool IsHiHatClosed = false;
         public bool IsHiHatOpen = false;
+        public double hhDuration = 0; // if using hihat sounds, how long in BPM the open hihat sound should last.
 
         public void SetBeatValue()
         {
@@ -712,30 +749,35 @@ namespace Pronome
             Bpm = Parse(beat);
 
             // is it a hihat closed or open sound?
-            if (new string[] {
-                "wav/hihat_half_center_v4.wav",
-                "wav/hihat_half_center_v7.wav",
-                "wav/hihat_half_center_v10.wav",
-                "wav/hihat_half_edge_v7.wav",
-                "wav/hihat_half_edge_v10.wav",
-                "wav/hihat_open_center_v4.wav",
-                "wav/hihat_open_center_v7.wav",
-                "wav/hihat_open_center_v10.wav",
-                "wav/hihat_open_edge_v7.wav",
-                "wav/hihat_open_edge_v10.wav"
-            }.Contains(sourceName))
+            if (HiHatOpenFileNames.Contains(sourceName))
             {
                 IsHiHatOpen = true;
             }
-            else if (new string[]
-            {
-                "wav/hihat_pedal_v3.wav",
-                "wav/hihat_pedal_v5.wav"
-            }.Contains(sourceName))
+            else if (HiHatClosedFileNames.Contains(sourceName))
             {
                 IsHiHatClosed = true;
             }
         }
+
+        static public string[] HiHatOpenFileNames = new string[]
+        {
+            "wav/hihat_half_center_v4.wav",
+            "wav/hihat_half_center_v7.wav",
+            "wav/hihat_half_center_v10.wav",
+            "wav/hihat_half_edge_v7.wav",
+            "wav/hihat_half_edge_v10.wav",
+            "wav/hihat_open_center_v4.wav",
+            "wav/hihat_open_center_v7.wav",
+            "wav/hihat_open_center_v10.wav",
+            "wav/hihat_open_edge_v7.wav",
+            "wav/hihat_open_edge_v10.wav"
+        };
+
+        static public string[] HiHatClosedFileNames = new string[]
+        {
+            "wav/hihat_pedal_v3.wav",
+            "wav/hihat_pedal_v5.wav"
+        };
 
         static public double Parse(string str)
         {
@@ -1189,6 +1231,8 @@ namespace Pronome
                 cache = ms.GetBuffer();
                 CachedStreams.Add(fileName, cache);
             }
+
+            IsHiHatOpen = BeatCell.HiHatOpenFileNames.Contains(fileName);
         }
 
         public double Volume
@@ -1263,7 +1307,7 @@ namespace Pronome
             else currentlyMuted = false;
 
             previousByteInterval = result;
-
+            
             return result;
         }
 
@@ -1325,7 +1369,7 @@ namespace Pronome
         public void SetOffset(double value)
         {
             offsetRemainder = ((int)value) - value;
-            initialOffset = (int)value * 4;
+            initialOffset = ((int)value) * 4;
             hasOffset = true;
         }
 
@@ -1335,7 +1379,7 @@ namespace Pronome
         }
 
         protected int initialOffset = 0;
-        protected double offsetRemainder = 0f;
+        protected double offsetRemainder = 0;
         protected bool hasOffset = false;
 
         protected double SilentInterval; // remaining samples in silent interval
@@ -1344,7 +1388,6 @@ namespace Pronome
         protected bool silentIntvlSilent = false;
         protected double SilentIntervalRemainder; // fractional portion
         protected bool IsHiHatOpen = false; // is this an open hihat sound?
-        protected bool IsHiHatClosed = false; // is this a pedal down hihat sound.
 
         public void SetSilentInterval(double audible, double silent)
         {
@@ -1378,6 +1421,7 @@ namespace Pronome
                         hasOffset = false;
                     }
                 }
+
                 if (ByteInterval == 0)
                 {
                     ByteInterval = GetNextInterval();
@@ -1418,10 +1462,21 @@ namespace Pronome
                         chunkSize = cacheSize - cacheIndex;
                     }
 
+                    // if hihat open sound, account for duration
+                    if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration > 0)
+                    {
+                        Console.WriteLine(BeatCollection.CurrentHiHatDuration);
+                        if (chunkSize >= BeatCollection.CurrentHiHatDuration)
+                        {
+                            chunkSize = (int)BeatCollection.CurrentHiHatDuration;
+                        }
+                        else BeatCollection.CurrentHiHatDuration -= chunkSize;
+                    }
+
                     if (chunkSize >= 4)
                     {
                         // check for muting
-                        if (Layer.IsMuted || Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed)
+                        if (Layer.IsMuted || (Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed) || IsHiHatOpen && BeatCollection.CurrentHiHatDuration == 0)
                         {
                             Array.Copy(new byte[buffer.Length], 0, buffer, offset + bytesCopied, chunkSize); // muted
                         }
@@ -1433,6 +1488,9 @@ namespace Pronome
                         cacheIndex += chunkSize;
                         bytesCopied += chunkSize;
                         ByteInterval -= chunkSize;
+
+                        if (IsHiHatOpen && chunkSize == BeatCollection.CurrentHiHatDuration)
+                            BeatCollection.CurrentHiHatDuration = 0; // hihat duration is up
                     }
                 }
                 else // silence
@@ -1552,15 +1610,23 @@ namespace Pronome
     {
         Layer Layer;
         double[] Beats;
+        double[] HHDuations;
+        bool hasHHDurations;
+        public int? CurrentHiHatDuration = null;
         public IEnumerator<int> Enumerator;
         bool isWav;
 
-        public SourceBeatCollection(Layer layer, double[] beats, IStreamProvider src)
+        public SourceBeatCollection(Layer layer, double[] beats, IStreamProvider src, double[] hhDurations)
         {
             Layer = layer;
             Beats = beats.Select((x) => BeatCell.ConvertFromBpm(x, src)).ToArray();
             Enumerator = GetEnumerator();
             isWav = src.WaveFormat.AverageBytesPerSecond == 64000;
+            if (hhDurations.Where(x => x != 0).Count() > 0)
+            { // has hihat durations.
+                HHDuations = hhDurations.Select(x => BeatCell.ConvertFromBpm(x, src)).ToArray();
+                hasHHDurations = true;
+            }
         }
 
         public IEnumerator<int> GetEnumerator()
@@ -1568,6 +1634,13 @@ namespace Pronome
             for (int i = 0; ; i++)
             {
                 if (i == Beats.Count()) i = 0; // loop over collection
+
+                if (hasHHDurations)
+                {
+                    CurrentHiHatDuration = (int)(HHDuations[i] * 4);
+
+                    if (CurrentHiHatDuration == 0) CurrentHiHatDuration = null;
+                }
 
                 double bpm = Beats[i];//BeatCell.ConvertFromBpm(Beats[i], BytesPerSec);
                 
