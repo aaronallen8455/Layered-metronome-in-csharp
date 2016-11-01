@@ -25,20 +25,34 @@ namespace Pronome
             // todo: @0 silent beats.
 
             Metronome metronome = Metronome.GetInstance();
-            metronome.Tempo = 100f;
+            metronome.Tempo = 90f;
+
+            //new Layer("[.25,.25@C4,.25@A2,.25@A3,.25@Bb2,1.75@Bb3]2,[.25@F2,.25@F3,.25@D2,.25@D3,.25@Eb2,1.75@Eb3](2)-.5,1/6@Eb3,1/6@D3,1/6@Db3,.5@C3,.5@Eb3,.5@D3,.5@Ab2,.5@G2,.5@Db3,1/6@C3,1/6@F#3,1/6@F3,1/6@E3,1/6@Bb3,1/6@A3,1/3@Ab3,1/3@Eb3,1/3@B2,1/3@Bb2,1/3@A2,1/3+3@Ab2", "C3");
+            //new Layer("[.5,.5+.75,.5,.75]4,.5,.25,.5,.25,.75,.25,.5,!1!.5,.5+.75,.5,.75!2!,.5,.75,.5,1,.25", WavFileStream.GetFileByName("Kick Drum V2"));
+            //new Layer("[[1@0,1.5|.5]2,.25(2)]2,1@0,2,!1!1@0,.5,1.25!2.75!,.5,.75,1.5,.25(2)", WavFileStream.GetFileByName("Snare Rim V3"));
+            //new Layer(".5", WavFileStream.GetFileByName("HiHat Half Center V1"));
+            new Layer("1,1@22", WavFileStream.GetFileByName("HiHat Open Edge V1"));
+
             ////
             //var layer1 = new Layer("[1,2/3,1/3]4,{$s}2/3", "A4");
             //new Layer("1", "A5");
-            var layer2 = new Layer("1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V3"));
-            var layer3 = new Layer("2,1/3@19", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
+            //var layer2 = new Layer("1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V3"));
+            //var layer3 = new Layer("2,1/3@19", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
 
             //Metronome.Load("metronome");
             //var metronome = Metronome.GetInstance();
             metronome.Play();
             
             Console.ReadKey();
+            //metronome.Stop();
+            metronome.ChangeTempo(50f);
+            Console.ReadKey();
+            metronome.ChangeTempo(38f);
+            Console.ReadKey();
+            //metronome.Stop();
+            //metronome.Play();
+            //Console.ReadKey();
             metronome.Stop();
-
             metronome.Dispose();
         }
     }
@@ -161,10 +175,33 @@ namespace Pronome
             return Player.PlaybackPosition;
         }
 
+        protected float tempo;
         [DataMember]
         public float Tempo // in BPM
         {
-            get; set;
+            get { return tempo; }
+            set { ChangeTempo(value); }
+        }
+
+        public void ChangeTempo(float newTempo)
+        {
+            if (Player.PlaybackState != PlaybackState.Stopped)
+            {
+                // modify the beat values and current byte intervals for all layers and audio sources.
+                float ratio = Tempo / newTempo;
+                Layers.ForEach(x =>
+                {
+                    x.AudioSources.Values.Select(a => { a.BeatCollection.MultiplyBeatValues(ratio); a.MultiplyByteInterval(ratio); return a; }).ToArray();
+                    x.BaseAudioSource.BeatCollection.MultiplyBeatValues(ratio);
+                    x.BaseAudioSource.MultiplyByteInterval(ratio);
+                    if (!x.IsPitch && x.BasePitchSource != null)
+                    {
+                        x.BasePitchSource.BeatCollection.MultiplyBeatValues(ratio);
+                        x.BasePitchSource.MultiplyByteInterval(ratio);
+                    }
+                });
+            }
+            tempo = newTempo;
         }
 
         [DataMember]
@@ -323,7 +360,7 @@ namespace Pronome
             }
         }
 
-        public Layer(string beat, string baseSourceName, string offset = "", float pan = 0f, float volume = .6f)
+        public Layer(string beat, string baseSourceName, string offset = "", float pan = 0f, float volume = 1f)
         {
             SetBaseSource(baseSourceName);
             if (offset != "")
@@ -423,19 +460,30 @@ namespace Pronome
             while (beat.Contains('['))
             {
                 var match = Regex.Match(beat, @"\[([^\][]+?)\]\(?(\d+)\)?([\d\-+/*.]*)");
-                StringBuilder result = new StringBuilder(beat.Substring(0, match.Index));
+                StringBuilder result = new StringBuilder();
                 int itr = int.Parse(match.Groups[2].Value);
                 for (int i = 0; i < itr; i++)
                 {
-                    result.Append(match.Groups[1].Value);
+                    // if theres a last time exit point, only copy up to that
+                    if (i == itr - 1 && match.Value.Contains('|'))
+                    {
+                        result.Append(match.Groups[1].Value.Substring(0, match.Groups[1].Value.IndexOf('|')));
+                    }
+                    else result.Append(match.Groups[1].Value); // copy the group
+
                     if (i == itr - 1)
                     {
                         result.Append("+0").Append(match.Groups[3].Value);
                     }
                     else result.Append(",");
                 }
-                beat = result.Append(beat.Substring(match.Index + match.Length)).ToString();
+                result.Replace('|', ',');
+                beat = beat.Substring(0, match.Index) + result.Append(beat.Substring(match.Index + match.Length)).ToString();
             }
+
+            // fix instances of a pitch modifier being following by +0 from repeater
+            beat = Regex.Replace(beat, @"(@[a-gA-G]?[#b]?[\d.]+)(\+[\d.\-+/*]+)", "$2$1");
+            
             BeatCell[] cells = beat.Split(',').Select((x) =>
             {
                 var match = Regex.Match(x, @"([\d.+\-/*]+)@?(.*)");
@@ -521,13 +569,13 @@ namespace Pronome
                 beat[i].Layer = this;
                 if (beat[i].SourceName != string.Empty && beat[i].SourceName.Count() > 5)
                 {
-                    // should cells of the same source use the same audiosource instead of creating new source each time? No
-                    //if (!AudioSources.ContainsKey(beat[i].SourceName))
-                    //{
+                    // should cells of the same source use the same audiosource instead of creating new source each time? Yes
+                    if (!AudioSources.ContainsKey(beat[i].SourceName))
+                    {
                         var wavStream = new WavFileStream(beat[i].SourceName);
                         wavStream.Layer = this;
                         AudioSources.Add(beat[i].SourceName, wavStream);
-                    //}
+                    }
                     beat[i].AudioSource = AudioSources[beat[i].SourceName];
                 }
                 else
@@ -950,6 +998,21 @@ namespace Pronome
 
         public double Gain { get; set; }
 
+        public void MultiplyByteInterval(double factor)
+        {
+            double mult = factor * ByteInterval;
+            ByteInterval = (int)mult;
+            Layer.Remainder += mult - ByteInterval;
+
+            // multiply the offset aswell
+            if (hasOffset)
+            {
+                mult = factor * InitialOffset;
+                InitialOffset = (int)mult;
+                OffsetRemainder += mult - InitialOffset;
+            }
+        }
+
         double volume;
         public double Volume
         {
@@ -1125,12 +1188,6 @@ namespace Pronome
                 // interval is over, reset
                 if (ByteInterval == 0)
                 {
-                    //if (lastIntervalMuted)
-                    //{
-                    //    GetNextFrequency();
-                    //    lastIntervalMuted = false;
-                    //}
-
                     Frequency = GetNextFrequency();
                     ByteInterval = GetNextInterval();
                     if (!silentIntvlSilent && !currentlyMuted && Frequency != 0)
@@ -1156,7 +1213,7 @@ namespace Pronome
                 else
                 {
                     // check for muting
-                    if (Layer.IsMuted || Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed)
+                    if (Layer.IsMuted || Layer.SoloGroupEngaged && !Layer.IsSoloed)
                     {
                         nSample = 0;
                         previousSample = sampleValue = 0;
@@ -1167,7 +1224,7 @@ namespace Pronome
                         multiple = TwoPi * Frequency / waveFormat.SampleRate;
                         sampleValue = previousSample = Gain * Math.Sin(nSample * multiple);
                     }
-                    Gain -= .0002;
+                    Gain -= .0003; //.0002 for .6 .0003 for 1
                 }
                 nSample++;
 
@@ -1204,7 +1261,6 @@ namespace Pronome
         public int BytesPerSec { get; set; }
 
         byte[] cache;
-        int cacheIndex = 0;
 
         public WavFileStream(string fileName)
         {
@@ -1230,10 +1286,14 @@ namespace Pronome
                 sourceStream.CopyTo(ms);
                 cache = ms.GetBuffer();
                 CachedStreams.Add(fileName, cache);
+                ms.Dispose();
             }
-
+            memStream = new MemoryStream(cache);
+            
             IsHiHatOpen = BeatCell.HiHatOpenFileNames.Contains(fileName);
         }
+
+        protected MemoryStream memStream;
 
         public double Volume
         {
@@ -1271,7 +1331,8 @@ namespace Pronome
                     BeatCell.ConvertFromBpm(Layer.Offset, this)
                 );
             }
-            cacheIndex = 0;
+
+            memStream.Position = 0;
         }
 
         public override long Length
@@ -1309,6 +1370,30 @@ namespace Pronome
             previousByteInterval = result;
             
             return result;
+        }
+
+        public void MultiplyByteInterval(double factor)
+        {
+            double div = ByteInterval / 4;
+            div *= factor;
+            Layer.Remainder += div - (int)div;
+            ByteInterval = (int)div * 4;
+
+            // multiply the offset aswell
+            if (hasOffset)
+            {
+                div = initialOffset / 4;
+                div *= factor;
+                offsetRemainder += div - (int)div;
+                initialOffset = (int)div * 4;
+            }
+
+            // do the hihat cutoff interval
+            if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != null && BeatCollection.CurrentHiHatDuration != 0)
+            {
+                div = (int)BeatCollection.CurrentHiHatDuration / 4;
+                BeatCollection.CurrentHiHatDuration = (int)(div * factor) * 4;
+            }
         }
 
         protected bool IsSilentIntervalSilent() // check if silent interval is currently silent or audible. Perform timing shifts
@@ -1404,101 +1489,47 @@ namespace Pronome
         public override int Read(byte[] buffer, int offset, int count)
         {
             int bytesCopied = 0;
-            int cacheSize = cache.Length;
+            //int cacheSize = cache.Length;
 
             while (bytesCopied < count)
             {
                 if (hasOffset)
                 {
-                    int subtract = initialOffset > count - bytesCopied ? count - bytesCopied : initialOffset;
-                    initialOffset -= subtract;
-                    Array.Copy(new byte[subtract], 0, buffer, bytesCopied + offset, subtract);
-                    bytesCopied += subtract;
-
+                    Array.Copy(new byte[4], 0, buffer, bytesCopied + offset, 4);
+                    initialOffset -= 4;
+                    bytesCopied += 4;
                     if (initialOffset == 0)
                     {
                         Layer.Remainder += offsetRemainder;
                         hasOffset = false;
                     }
+                    continue;
                 }
 
+                // reset the stream position and get new interval if interval is up
                 if (ByteInterval == 0)
                 {
                     ByteInterval = GetNextInterval();
-                    if (!silentIntvlSilent && !currentlyMuted) cacheIndex = 0;
+                    if (!silentIntvlSilent && !currentlyMuted)
+                        memStream.Position = 0;
                 }
 
-                if (cacheIndex < cacheSize) // play from the sample
+                int result = 0;
+                if (!IsHiHatOpen || BeatCollection.CurrentHiHatDuration != 0)
+                    result = memStream.Read(buffer, bytesCopied + offset, 4);
+
+                // check if end of file was reached
+                if (result == 0)
                 {
-                    // have to keep 4 byte alignment throughout
-                    int offsetMod = (offset + bytesCopied) % 4;
-                    if (offsetMod != 0)
-                    {
-                        bytesCopied += (4 - offsetMod);
-                        ByteInterval -= (4 - offsetMod);
-                    }
-
-                    int chunkSize = new int[] { cacheSize - cacheIndex, ByteInterval, count - bytesCopied }.Min();
-
-                    int chunkSizeMod = chunkSize % 4;
-                    if (chunkSizeMod != 0)
-                    {
-                        chunkSize += (4 - chunkSizeMod);
-                        ByteInterval -= (4 - chunkSizeMod);
-                    }
-
-                    if (ByteInterval <= 0)
-                    {
-                        int carry = ByteInterval < 0 ? ByteInterval : 0;
-
-                        ByteInterval = GetNextInterval();
-                        ByteInterval += carry;
-                        cacheIndex = 0;
-                    }
-
-                    // dont read more than cache size
-                    if (chunkSize > cacheSize - cacheIndex)
-                    {
-                        chunkSize = cacheSize - cacheIndex;
-                    }
-
-                    // if hihat open sound, account for duration
-                    if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration > 0)
-                    {
-                        Console.WriteLine(BeatCollection.CurrentHiHatDuration);
-                        if (chunkSize >= BeatCollection.CurrentHiHatDuration)
-                        {
-                            chunkSize = (int)BeatCollection.CurrentHiHatDuration;
-                        }
-                        else BeatCollection.CurrentHiHatDuration -= chunkSize;
-                    }
-
-                    if (chunkSize >= 4)
-                    {
-                        // check for muting
-                        if (Layer.IsMuted || (Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed) || IsHiHatOpen && BeatCollection.CurrentHiHatDuration == 0)
-                        {
-                            Array.Copy(new byte[buffer.Length], 0, buffer, offset + bytesCopied, chunkSize); // muted
-                        }
-                        else
-                        {
-                            Array.Copy(cache, cacheIndex, buffer, offset + bytesCopied, chunkSize);
-                        }
-
-                        cacheIndex += chunkSize;
-                        bytesCopied += chunkSize;
-                        ByteInterval -= chunkSize;
-
-                        if (IsHiHatOpen && chunkSize == BeatCollection.CurrentHiHatDuration)
-                            BeatCollection.CurrentHiHatDuration = 0; // hihat duration is up
-                    }
+                    Array.Copy(new byte[4], 0, buffer, bytesCopied + offset, 4);
                 }
-                else // silence
-                {
-                    int smallest = Math.Min(ByteInterval, count - bytesCopied);
 
-                    ByteInterval -= smallest;
-                    bytesCopied += smallest;
+                bytesCopied += 4;
+                ByteInterval -= 4;
+
+                if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != 0)
+                {
+                    BeatCollection.CurrentHiHatDuration -= 4;
                 }
             }
 
@@ -1519,57 +1550,57 @@ namespace Pronome
         static public string[,] FileNameIndex = new string[,]
         {
             { "silentbeat", "silentbeat" }, // is cached as an empty sample
-            { "wav/crash1_edge_v5.wav", "Crash Edge V1" },
-            { "wav/crash1_edge_v8.wav", "Crash Edge V2" },
-            { "wav/crash1_edge_v10.wav", "Crash Edge V3" },
-            { "wav/floortom_v6.wav", "FloorTom V1" },
-            { "wav/floortom_v11.wav", "FloorTom V2" },
-            { "wav/floortom_v16.wav", "FloorTom V3" },
-            { "wav/hihat_closed_center_v4.wav", "HiHat Closed Center V1" },
-            { "wav/hihat_closed_center_v7.wav", "HiHat Closed Center V2" },
-            { "wav/hihat_closed_center_v10.wav", "HiHat Closed Center V3" },
-            { "wav/hihat_closed_edge_v7.wav", "HiHat Closed Edge V1" },
-            { "wav/hihat_closed_edge_v10.wav", "HiHat Closed Edge V2" },
-            { "wav/hihat_half_center_v4.wav", "HiHat Half Center V1" },
-            { "wav/hihat_half_center_v7.wav", "HiHat Half Center V2" },
-            { "wav/hihat_half_center_v10.wav", "HiHat Half Center V3" },
-            { "wav/hihat_half_edge_v7.wav", "HiHat Half Edge V1" },
-            { "wav/hihat_half_edge_v10.wav", "HiHat Half Edge V2" },
-            { "wav/hihat_open_center_v4.wav", "HiHat Open Center V1" },
-            { "wav/hihat_open_center_v7.wav", "HiHat Open Center V2" },
-            { "wav/hihat_open_center_v10.wav", "HiHat Open Center V3" },
-            { "wav/hihat_open_edge_v7.wav", "HiHat Open Edge V1" },
-            { "wav/hihat_open_edge_v10.wav", "HiHat Open Edge V2" },
-            { "wav/hihat_pedal_v3.wav", "HiHat Pedal V1" },
-            { "wav/hihat_pedal_v5.wav", "HiHat Pedal V2" },
-            { "wav/kick_v7.wav", "Kick Drum V1" },
-            { "wav/kick_v11.wav", "Kick Drum V2" },
-            { "wav/kick_v16.wav", "Kick Drum V3" },
-            { "wav/racktom_v6.wav", "RackTom V1" },
-            { "wav/racktom_v11.wav", "RackTom V2" },
-            { "wav/racktom_v16.wav", "RackTom V3" },
-            { "wav/ride_bell_v5.wav", "Ride Bell V1" },
-            { "wav/ride_bell_v8.wav", "Ride Bell V2" },
-            { "wav/ride_bell_v10.wav", "Ride Bell V3" },
-            { "wav/ride_center_v5.wav", "Ride Center V1" },
-            { "wav/ride_center_v6.wav", "Ride Center V2" },
-            { "wav/ride_center_v8.wav", "Ride Center V3" },
-            { "wav/ride_center_v10.wav", "Ride Center V4" },
-            { "wav/ride_edge_v4.wav", "Ride Edge V1" },
-            { "wav/ride_edge_v7.wav", "Ride Edge V2" },
-            { "wav/ride_edge_v10.wav", "Ride Edge V3" },
-            { "wav/snare_center_v6.wav", "Snare Center V1" },
-            { "wav/snare_center_v11.wav", "Snare Center V2" },
-            { "wav/snare_center_v16.wav", "Snare Center V3" },
-            { "wav/snare_edge_v6.wav", "Snare Edge V1" },
-            { "wav/snare_edge_v11.wav", "Snare Edge V2" },
-            { "wav/snare_edge_v16.wav", "Snare Edge V3" },
-            { "wav/snare_rim_v6.wav", "Snare Rim V1" },
-            { "wav/snare_rim_v11.wav", "Snare Rim V2" },
-            { "wav/snare_rim_v16.wav", "Snare Rim V3" },
-            { "wav/snare_xstick_v6.wav", "Snare XStick V1" },
-            { "wav/snare_xstick_v11.wav", "Snare XStick V2" },
-            { "wav/snare_xstick_v16.wav", "Snare XStick V3" },
+            { "wav/crash1_edge_v5.wav", "Crash Edge V1" },                        //1
+            { "wav/crash1_edge_v8.wav", "Crash Edge V2" },                        //2
+            { "wav/crash1_edge_v10.wav", "Crash Edge V3" },                       //3
+            { "wav/floortom_v6.wav", "FloorTom V1" },                             //4
+            { "wav/floortom_v11.wav", "FloorTom V2" },                            //5
+            { "wav/floortom_v16.wav", "FloorTom V3" },                            //6
+            { "wav/hihat_closed_center_v4.wav", "HiHat Closed Center V1" },       //7
+            { "wav/hihat_closed_center_v7.wav", "HiHat Closed Center V2" },       //8
+            { "wav/hihat_closed_center_v10.wav", "HiHat Closed Center V3" },      //9
+            { "wav/hihat_closed_edge_v7.wav", "HiHat Closed Edge V1" },           //10
+            { "wav/hihat_closed_edge_v10.wav", "HiHat Closed Edge V2" },          //11
+            { "wav/hihat_half_center_v4.wav", "HiHat Half Center V1" },           //12
+            { "wav/hihat_half_center_v7.wav", "HiHat Half Center V2" },           //13
+            { "wav/hihat_half_center_v10.wav", "HiHat Half Center V3" },          //14
+            { "wav/hihat_half_edge_v7.wav", "HiHat Half Edge V1" },               //15
+            { "wav/hihat_half_edge_v10.wav", "HiHat Half Edge V2" },              //16
+            { "wav/hihat_open_center_v4.wav", "HiHat Open Center V1" },           //17
+            { "wav/hihat_open_center_v7.wav", "HiHat Open Center V2" },           //18
+            { "wav/hihat_open_center_v10.wav", "HiHat Open Center V3" },          //19
+            { "wav/hihat_open_edge_v7.wav", "HiHat Open Edge V1" },               //20
+            { "wav/hihat_open_edge_v10.wav", "HiHat Open Edge V2" },              //21
+            { "wav/hihat_pedal_v3.wav", "HiHat Pedal V1" },                       //22
+            { "wav/hihat_pedal_v5.wav", "HiHat Pedal V2" },                       //23
+            { "wav/kick_v7.wav", "Kick Drum V1" },                                //24
+            { "wav/kick_v11.wav", "Kick Drum V2" },                               //25
+            { "wav/kick_v16.wav", "Kick Drum V3" },                               //26
+            { "wav/racktom_v6.wav", "RackTom V1" },                               //27
+            { "wav/racktom_v11.wav", "RackTom V2" },                              //28
+            { "wav/racktom_v16.wav", "RackTom V3" },                              //29
+            { "wav/ride_bell_v5.wav", "Ride Bell V1" },                           //30
+            { "wav/ride_bell_v8.wav", "Ride Bell V2" },                           //31
+            { "wav/ride_bell_v10.wav", "Ride Bell V3" },                          //32
+            { "wav/ride_center_v5.wav", "Ride Center V1" },                       //33
+            { "wav/ride_center_v6.wav", "Ride Center V2" },                       //34
+            { "wav/ride_center_v8.wav", "Ride Center V3" },                       //35
+            { "wav/ride_center_v10.wav", "Ride Center V4" },                      //36
+            { "wav/ride_edge_v4.wav", "Ride Edge V1" },                           //37
+            { "wav/ride_edge_v7.wav", "Ride Edge V2" },                           //38
+            { "wav/ride_edge_v10.wav", "Ride Edge V3" },                          //39
+            { "wav/snare_center_v6.wav", "Snare Center V1" },                     //40
+            { "wav/snare_center_v11.wav", "Snare Center V2" },                    //41
+            { "wav/snare_center_v16.wav", "Snare Center V3" },                    //42
+            { "wav/snare_edge_v6.wav", "Snare Edge V1" },                         //43
+            { "wav/snare_edge_v11.wav", "Snare Edge V2" },                        //44
+            { "wav/snare_edge_v16.wav", "Snare Edge V3" },                        //45
+            { "wav/snare_rim_v6.wav", "Snare Rim V1" },                           //46
+            { "wav/snare_rim_v11.wav", "Snare Rim V2" },                          //47
+            { "wav/snare_rim_v16.wav", "Snare Rim V3" },                          //48
+            { "wav/snare_xstick_v6.wav", "Snare XStick V1" },                     //49
+            { "wav/snare_xstick_v11.wav", "Snare XStick V2" },                    //50
+            { "wav/snare_xstick_v16.wav", "Snare XStick V3" },                    //51
         };
     }
 
@@ -1597,6 +1628,8 @@ namespace Pronome
         double GetOffset();
 
         void SetSilentInterval(double audible, double silent);
+
+        void MultiplyByteInterval(double factor);
 
         Layer Layer { get; set; }
 
@@ -1637,7 +1670,7 @@ namespace Pronome
 
                 if (hasHHDurations)
                 {
-                    CurrentHiHatDuration = (int)(HHDuations[i] * 4);
+                    CurrentHiHatDuration = (int)HHDuations[i] * 4;
 
                     if (CurrentHiHatDuration == 0) CurrentHiHatDuration = null;
                 }
@@ -1648,7 +1681,7 @@ namespace Pronome
 
                 Layer.Remainder += bpm - whole; // add to layer's remainder accumulator
 
-                if (Layer.Remainder >= 1) // fractional value exceeds 1, add it to whole
+                while (Layer.Remainder >= 1) // fractional value exceeds 1, add it to whole
                 {
                     whole++;
                     Layer.Remainder -= 1;
@@ -1665,5 +1698,9 @@ namespace Pronome
             return GetEnumerator();
         }
 
+        public void MultiplyBeatValues(double factor)
+        {
+            Beats = Beats.Select(x => x * factor).ToArray();
+        }
     }
 }
