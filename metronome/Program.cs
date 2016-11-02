@@ -21,8 +21,7 @@ namespace Pronome
     {
         static void Main(string[] args)
         {
-            // todo: HiHat open and close muting
-            // todo: @0 silent beats.
+            // todo: HiHat open and close muting for random/interval muting.
 
             Metronome metronome = Metronome.GetInstance();
             metronome.Tempo = 90f;
@@ -31,24 +30,24 @@ namespace Pronome
             //new Layer("[.5,.5+.75,.5,.75]4,.5,.25,.5,.25,.75,.25,.5,!1!.5,.5+.75,.5,.75!2!,.5,.75,.5,1,.25", WavFileStream.GetFileByName("Kick Drum V2"));
             //new Layer("[[1@0,1.5|.5]2,.25(2)]2,1@0,2,!1!1@0,.5,1.25!2.75!,.5,.75,1.5,.25(2)", WavFileStream.GetFileByName("Snare Rim V3"));
             //new Layer(".5", WavFileStream.GetFileByName("HiHat Half Center V1"));
-            new Layer("1,1@22", WavFileStream.GetFileByName("HiHat Open Edge V1"));
 
             ////
             //var layer1 = new Layer("[1,2/3,1/3]4,{$s}2/3", "A4");
             //new Layer("1", "A5");
             //var layer2 = new Layer("1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V3"));
-            //var layer3 = new Layer("2,1/3@19", WavFileStream.GetFileByName("HiHat Pedal V2"), "1");
+            new Layer("2,1/3@19", WavFileStream.GetFileByName("HiHat Pedal V2"));
 
             //Metronome.Load("metronome");
             //var metronome = Metronome.GetInstance();
+            metronome.SetRandomMute(30);
             metronome.Play();
             
             Console.ReadKey();
             //metronome.Stop();
-            metronome.ChangeTempo(50f);
-            Console.ReadKey();
-            metronome.ChangeTempo(38f);
-            Console.ReadKey();
+            //metronome.ChangeTempo(50f);
+            //Console.ReadKey();
+            //metronome.ChangeTempo(38f);
+            //Console.ReadKey();
             //metronome.Stop();
             //metronome.Play();
             //Console.ReadKey();
@@ -57,23 +56,30 @@ namespace Pronome
         }
     }
 
-    
+    /** <summary>Has player controls, tempo, global muting options, and holds layers. Singleton</summary>
+     */
     [DataContract]
     public class Metronome : IDisposable
     {
+        /** <sumarry>Mix the output from all audio sources.</sumarry> */
         protected MixingSampleProvider Mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(16000, 2));
+        /** <summary>Access the sound output device.</summary> */
         protected DirectSoundOut Player = new DirectSoundOut();
 
+        /** <summary>The singleton instance.</summary> */
         static Metronome Instance;
 
+        /** <summary>A collection of all the layers.</summary> */
         [DataMember]
         public List<Layer> Layers = new List<Layer>();
 
+        /** <summary>Constructor</summary> */
         private Metronome()
         {
             Player.Init(Mixer);
         }
 
+        /** <summary>Get the singleton instance.</summary> */
         static public Metronome GetInstance()
         {
             if (Instance == null)
@@ -81,6 +87,8 @@ namespace Pronome
             return Instance;
         }
 
+        /** <summary>Add a layer.</summary>
+         * <param name="layer">Layer to add.</param> */
         public void AddLayer(Layer layer)
         {
             // add sources to mixer
@@ -97,6 +105,8 @@ namespace Pronome
             }
         }
 
+        /** <summary>Add all the audio sources from each layer.</summary>
+         * <param name="layer">Layer to add sources from.</param> */
         protected void AddSourcesFromLayer(Layer layer)
         {
             // add sources to mixer
@@ -135,6 +145,8 @@ namespace Pronome
             }
         }
 
+        /** <summary>Remove designated layer.</summary>
+         * <param name="layer">Layer to remove.</param> */
         public void RemoveLayer(Layer layer)
         {
             Layers.Remove(layer);
@@ -150,11 +162,13 @@ namespace Pronome
             layer.Dispose();
         }
 
+        /** <summary>Play all layers in sync.</summary> */
         public void Play()
         {
             Player.Play();
         }
 
+        /** <summary>Stop playing and reset positions.</summary> */
         public void Stop()
         {
             Player.Pause();
@@ -165,16 +179,19 @@ namespace Pronome
             }
         }
 
+        /** <summary>Pause at current playback point.</summary> */
         public void Pause()
         {
             Player.Pause();
         }
 
+        /** <summary>Get the elapsed playing time.</summary> */
         public TimeSpan GetElapsedTime()
         {
             return Player.PlaybackPosition;
         }
 
+        /** <summary>The tempo in BPM.</summary> */
         protected float tempo;
         [DataMember]
         public float Tempo // in BPM
@@ -183,6 +200,7 @@ namespace Pronome
             set { ChangeTempo(value); }
         }
 
+        /** <summary>Change the tempo. Can be during play.</summary> */
         public void ChangeTempo(float newTempo)
         {
             if (Player.PlaybackState != PlaybackState.Stopped)
@@ -204,6 +222,7 @@ namespace Pronome
             tempo = newTempo;
         }
 
+        /** <summary>The master volume.</summary> */
         [DataMember]
         public float Volume
         {
@@ -211,13 +230,20 @@ namespace Pronome
             set { Player.Volume = value; }
         }
 
+        /** <summary>Used for random muting.</summary> */
         public static Random Rand = new Random();
 
+        /** <summary>Is a random muting value set?</summary> */
         [DataMember]public bool IsRandomMute = false;
 
+        /** <summary>Percent chance that a note gets muted.</summary> */
         [DataMember]public int RandomMutePercent;
+        /** <summary>Number of seconds over which the random mute percent ramps up to full value.</summary> */
         [DataMember]public int RandomMuteSeconds = 0;
 
+        /** <summary>Set a random mute percent.</summary>
+         * <param name="percent">Percent chance for muting</param>
+         * <param name="seconds">Seconds ramp til full percent muting occurs.</param> */
         public void SetRandomMute(int percent, int seconds = 0)
         {
             RandomMutePercent = percent <= 100 && percent >= 0 ? percent : 0;
@@ -225,11 +251,17 @@ namespace Pronome
             RandomMuteSeconds = seconds;
         }
 
+        /** <summary>True if a silent interval is set.</summary> */
         [DataMember]public bool IsSilentInterval = false;
 
+        /** <summary>The value in quarter notes that a beat plays audibly.</summary> */
         [DataMember]public double AudibleInterval;
+        /** <summary>The value in quarter notes that a beat is silenced.</summary> */
         [DataMember]public double SilentInterval;
 
+        /** <summary>Set an audible/silent interval.</summary>
+         * <param name="audible">The value in quarter notes that a beat plays audibly.</param>
+         * <param name="silent">The value in quarter notes that a beat is silenced.</param> */
         public void SetSilentInterval(double audible, double silent)
         {
             if (audible > 0 && silent > 0)
@@ -255,6 +287,16 @@ namespace Pronome
                 IsSilentInterval = false;
         }
 
+        /** <summary>Set an audible/silent interval.</summary>
+         * <param name="audible">The value in quarter notes that a beat plays audibly.</param>
+         * <param name="silent">The value in quarter notes that a beat is silenced.</param> */
+        public void SetSilentInterval(string audible, string silent)
+        {
+            SetSilentInterval(BeatCell.Parse(audible), BeatCell.Parse(silent));
+        }
+
+        /** <summary>Save the current beat to disk.</summary>
+         * <param name="name">The name for this beat.</param> */
         static public void Save(string name)
         {
             var ds = new DataContractSerializer(typeof(Metronome));
@@ -265,6 +307,8 @@ namespace Pronome
             }
         }
 
+        /** <summary>Load a previously saved beat by name.</summary>
+         * <param name="fileName">The name of the beat to open.</param> */
         static public void Load(string fileName)
         {
             var ds = new DataContractSerializer(typeof(Metronome));
@@ -275,6 +319,7 @@ namespace Pronome
             }
         }
 
+        /** <summary>Prepare to deserialize. Used in loading a saved beat.</summary> */
         [OnDeserializing]
         void BeforeDeserialization(StreamingContext sc)
         {
@@ -284,6 +329,7 @@ namespace Pronome
             Player.Init(Mixer);
         }
 
+        /** <summary>After deserializing, add in the layers and audio sources.</summary> */
         [OnDeserialized]
         void Deserialized(StreamingContext sc)
         {
@@ -294,6 +340,7 @@ namespace Pronome
             }
         }
 
+        /** <summary>Dispose of resoures from all members.</summary> */
         public void Dispose()
         {
             Player.Dispose();
@@ -302,25 +349,38 @@ namespace Pronome
     }
 
 
+    /** <summary>A layer representing a rhythmic pattern within the complete beat.</summary> */
     [DataContract]
     public class Layer : IDisposable
     {
+        /** <summary>The individual beat cells contained by this layer.</summary> */
         protected List<BeatCell> Beat;
 
+        /** <summary>The audio sources that are not pitch are the base sound.</summary> */
         public Dictionary<string, IStreamProvider> AudioSources = new Dictionary<string, IStreamProvider>();
+        /** <summary>The base audio source. Could be a pitch or wav file source.</summary> */
         public IStreamProvider BaseAudioSource;
+        /** <summary>If this layer has any pitch sounds, they are held here.</summary> */
         public PitchStream BasePitchSource; // only use one pitch source per layer
+        /** <summary>True if the base source is a pitch.</summary> */
         [DataMember]public bool IsPitch;
+        /** <summary>The beat code string that was passed in to create the rhythm of this layer.</summary> */
         [DataMember]public string ParsedString;
+        /** <summary>The fractional portion of sample per second values are accumulated here and added in when over 1.</summary> */
         [DataMember]public double Remainder = .0; // holds the accumulating fractional milliseconds.
+        /** <summary>A value in quarter notes that all sounds in this layer are offset by.</summary> */
         [DataMember]public double Offset = 0; // in BPM
+        /** <summary>The name of the base source.</summary> */
         [DataMember]protected string BaseSourceName;
+        /** <summary>True if the layer is muted.</summary> */
         public bool IsMuted = false;
+        /** <summary>True if the layer is part of the soloed group.</summary> */
         public bool IsSoloed = false;
+        /** <summary>True if a solo group exists.</summary> */
         public static bool SoloGroupEngaged = false; // is there a solo group?
-        //protected static List<Layer> SoloedLayers = new List<Layer>(); // holds layers in the soloed group
 
         [DataMember]protected float volume;
+        /** <summary>Set the volume of all sound sources in this layer.</summary> */
         public float Volume
         {
             get { return volume; }
@@ -340,6 +400,7 @@ namespace Pronome
         }
 
         [DataMember]protected float pan;
+        /** <summary>Set the pan value for all sound sources in this layer.</summary> */
         public float Pan
         {
             get
@@ -360,6 +421,12 @@ namespace Pronome
             }
         }
 
+        /** <summary>Layer constructor</summary>
+         * <param name="baseSourceName">Name of the base sound source.</param>
+         * <param name="beat">Beat code.</param>
+         * <param name="offset">Amount of offset</param>
+         * <param name="pan">Set the pan</param>
+         * <param name="volume">Set the volume</param> */
         public Layer(string beat, string baseSourceName, string offset = "", float pan = 0f, float volume = 1f)
         {
             SetBaseSource(baseSourceName);
@@ -372,6 +439,8 @@ namespace Pronome
             Metronome.GetInstance().AddLayer(this);
         }
 
+        /** <summary>Parse the beat code, generating beat cells.</summary>
+         * <param name="beat">Beat code.</param> */
         public void Parse(string beat)
         {
             ParsedString = beat;
@@ -507,6 +576,8 @@ namespace Pronome
             SetBeat(cells);
         }
 
+        /** <summary>Set the base source. Will also set Base pitch if a pitch.</summary>
+         * <param name="baseSourceName">Name of source to use.</param> */
         public void SetBaseSource(string baseSourceName)
         {
             BaseSourceName = baseSourceName;
@@ -529,6 +600,8 @@ namespace Pronome
             //BasePitchSource.Layer = this;
         }
 
+        /** <summary>Set the offset for this layer.</summary>
+         * <param name="offset">Quarter notes to offset by.</param> */
         public void SetOffset(double offset)
         {
             Offset = offset;
@@ -553,12 +626,16 @@ namespace Pronome
             }
         }
 
+        /** <summary>Set the offset for this layer.</summary>
+         * <param name="offset">Beat code value to offset by.</param> */
         public void SetOffset(string offset)
         {
             double os = BeatCell.Parse(offset);
             SetOffset(os);
         }
 
+        /** <summary>Add array of beat cells and create all audio sources.</summary>
+         * <param name="beat">Array of beat cells.</param> */
         public void SetBeat(BeatCell[] beat)
         {
             //float tempo = Metronome.GetInstance().Tempo;
@@ -643,6 +720,7 @@ namespace Pronome
             SetBeatCollectionOnSources();
         }
 
+        /** <summary>Set the beat collections for each sound source.</summary> */
         public void SetBeatCollectionOnSources()
         {
             List<IStreamProvider> completed = new List<IStreamProvider>();
@@ -699,6 +777,7 @@ namespace Pronome
             }
         }
 
+        /** <summary>Reset this layer so that it will play from the start.</summary> */
         public void Reset()
         {
             Remainder = 0;
@@ -711,11 +790,13 @@ namespace Pronome
                 BasePitchSource.Reset();
         }
 
+        /** <summary>Mute or unmute this layer.</summary> */
         public void ToggleMute()
         {
             IsMuted = !IsMuted;
         }
 
+        /** <summary>Add to soloed group.</summary> */
         public void ToggleSoloGroup()
         {
             if (IsSoloed)
@@ -735,6 +816,7 @@ namespace Pronome
             }
         }
 
+        /** <summary>Create necessary components from the serialized values.</summary> */
         public void Deserialize()
         {
             AudioSources = new Dictionary<string, IStreamProvider>();
@@ -1188,6 +1270,7 @@ namespace Pronome
                 // interval is over, reset
                 if (ByteInterval == 0)
                 {
+                    double curFreq = Frequency;
                     Frequency = GetNextFrequency();
                     ByteInterval = GetNextInterval();
                     if (!silentIntvlSilent && !currentlyMuted && Frequency != 0)
@@ -1203,6 +1286,7 @@ namespace Pronome
 
                         Gain = Volume;
                     }
+                    else Frequency = curFreq; //retain frequency if random/interval muting occurs.
                 }
 
                 if (Gain <= 0)
@@ -1290,10 +1374,12 @@ namespace Pronome
             }
             memStream = new MemoryStream(cache);
             
-            IsHiHatOpen = BeatCell.HiHatOpenFileNames.Contains(fileName);
+            // is this a hihat sound?
+            if (BeatCell.HiHatOpenFileNames.Contains(fileName)) IsHiHatOpen = true;
+            else if (BeatCell.HiHatClosedFileNames.Contains(fileName)) IsHiHatClose = true;
         }
 
-        protected MemoryStream memStream;
+        protected Stream memStream;
 
         public double Volume
         {
@@ -1350,6 +1436,8 @@ namespace Pronome
 
         public int GetNextInterval()
         {
+            int? curhhd = BeatCollection.CurrentHiHatDuration;
+
             BeatCollection.Enumerator.MoveNext();
             int result = BeatCollection.Enumerator.Current;
 
@@ -1361,7 +1449,9 @@ namespace Pronome
             // handle random mute
             if (IsRandomMuted())
             {
+                // don't update hihat duration if hihat was closed
                 BeatCollection.Enumerator.MoveNext();
+                if (curhhd == 0) BeatCollection.CurrentHiHatDuration = 0;
                 result += BeatCollection.Enumerator.Current;
                 currentlyMuted = true;
             }
@@ -1425,6 +1515,7 @@ namespace Pronome
         protected bool currentlyMuted = false;
         protected bool IsRandomMuted()
         {
+            bool result;
             if (!Metronome.GetInstance().IsRandomMute)
             {
                 currentlyMuted = false;
@@ -1439,7 +1530,9 @@ namespace Pronome
 
             int rand = (int)(Metronome.Rand.NextDouble() * 100);
             if (randomMuteCountdown == null)
-                return rand < Metronome.GetInstance().RandomMutePercent;
+            {
+                result = rand < Metronome.GetInstance().RandomMutePercent;
+            }
             else
             {
                 // countdown
@@ -1447,8 +1540,25 @@ namespace Pronome
                 else if (randomMuteCountdown < 0) randomMuteCountdown = 0;
 
                 float factor = (float)(randomMuteCountdownTotal - randomMuteCountdown) / randomMuteCountdownTotal;
-                return rand < Metronome.GetInstance().RandomMutePercent * factor;
+                result = rand < Metronome.GetInstance().RandomMutePercent * factor;
             }
+
+            if (IsHiHatClose && result)
+            {
+                foreach (IStreamProvider sp in Layer.AudioSources.Values)
+                {
+                    if (!sp.IsPitch)
+                    {
+                        WavFileStream wfs = sp as WavFileStream;
+                        if (wfs.IsHiHatOpen && wfs.BeatCollection.CurrentHiHatDuration > 0 && !wfs.currentlyMuted)
+                        {
+                            wfs.BeatCollection.CurrentHiHatDuration += BeatCollection.Enumerator.Current;
+                        }
+                    }
+                }
+            }
+
+            return result;
         }
 
         public void SetOffset(double value)
@@ -1473,6 +1583,7 @@ namespace Pronome
         protected bool silentIntvlSilent = false;
         protected double SilentIntervalRemainder; // fractional portion
         protected bool IsHiHatOpen = false; // is this an open hihat sound?
+        protected bool IsHiHatClose = false; // is this a close hihat sound?
 
         public void SetSilentInterval(double audible, double silent)
         {
@@ -1510,12 +1621,14 @@ namespace Pronome
                 if (ByteInterval == 0)
                 {
                     ByteInterval = GetNextInterval();
+                    
                     if (!silentIntvlSilent && !currentlyMuted)
                         memStream.Position = 0;
                 }
 
+                // read from stream
                 int result = 0;
-                if (!IsHiHatOpen || BeatCollection.CurrentHiHatDuration != 0)
+                if (!(IsHiHatOpen && BeatCollection.CurrentHiHatDuration == 0) && !Layer.IsMuted && !(Layer.SoloGroupEngaged && !Layer.IsSoloed))
                     result = memStream.Read(buffer, bytesCopied + offset, 4);
 
                 // check if end of file was reached
@@ -1602,6 +1715,14 @@ namespace Pronome
             { "wav/snare_xstick_v11.wav", "Snare XStick V2" },                    //50
             { "wav/snare_xstick_v16.wav", "Snare XStick V3" },                    //51
         };
+
+        void IStreamProvider.Dispose()
+        {
+            memStream.Dispose();
+            sourceStream.Dispose();
+            Channel.Dispose();
+            Dispose();
+        }
     }
 
 
