@@ -22,7 +22,8 @@ namespace Pronome
         static void Main(string[] args)
         {
             // todo: HiHat open and close muting for random/interval muting.
-
+            // todo: case where 3 or more hihat closes happen where the outer ones are random muted. Should still stop on the inner one(s).
+            // have a stack of bools, double pairs (double for amount to add to hhinterval if close was muted) where we push whether a hihat close sound got muted. Pop the stack when hihat open sound hits it's hh close interval.
             Metronome metronome = Metronome.GetInstance();
             metronome.Tempo = 90f;
 
@@ -777,6 +778,9 @@ namespace Pronome
             }
         }
 
+        /** <summary>When a close hihat interval occurs, push a false or a true if it was muted along with the new interval value.</summary> */
+        public Stack<KeyValuePair<bool, double>> HiHatCloseIsMutedStack = new Stack<KeyValuePair<bool, double>>();
+
         /** <summary>Reset this layer so that it will play from the start.</summary> */
         public void Reset()
         {
@@ -1080,20 +1084,35 @@ namespace Pronome
 
         public double Gain { get; set; }
 
-        public void MultiplyByteInterval(double factor)
+        public void MultiplyByteInterval()
         {
-            double mult = factor * ByteInterval;
-            ByteInterval = (int)mult;
-            Layer.Remainder += mult - ByteInterval;
-
-            // multiply the offset aswell
-            if (hasOffset)
+            if (intervalMultiplyCued)
             {
-                mult = factor * InitialOffset;
-                InitialOffset = (int)mult;
-                OffsetRemainder += mult - InitialOffset;
+                double mult = intervalMultiplyFactor * ByteInterval;
+                ByteInterval = (int)mult;
+                Layer.Remainder += mult - ByteInterval;
+
+                // multiply the offset aswell
+                if (hasOffset)
+                {
+                    mult = intervalMultiplyFactor * InitialOffset;
+                    InitialOffset = (int)mult;
+                    OffsetRemainder += mult - InitialOffset;
+                }
+
+                intervalMultiplyCued = false;
             }
         }
+        public void MultiplyByteInterval(double factor)
+        {
+            if (!intervalMultiplyCued)
+            {
+                intervalMultiplyFactor = factor;
+                intervalMultiplyCued = true;
+            }
+        }
+        bool intervalMultiplyCued = false;
+        double intervalMultiplyFactor;
 
         double volume;
         public double Volume
@@ -1138,8 +1157,8 @@ namespace Pronome
             // handle random mute
             if (IsRandomMuted())
             {
-                BeatCollection.Enumerator.MoveNext();
-                result += BeatCollection.Enumerator.Current;
+                //BeatCollection.Enumerator.MoveNext();
+                //result += BeatCollection.Enumerator.Current;
                 currentlyMuted = true;
             }
             else currentlyMuted = false;
@@ -1166,6 +1185,7 @@ namespace Pronome
         protected int? randomMuteCountdown = null;
         protected int randomMuteCountdownTotal;
         protected bool currentlyMuted = false;
+
         protected bool IsRandomMuted()
         {
             if (!Metronome.GetInstance().IsRandomMute)
@@ -1244,6 +1264,11 @@ namespace Pronome
         public int Read(float[] buffer, int offset, int count)
         {
             int outIndex = offset;
+
+            // perform cued interval multiplication
+            if (intervalMultiplyCued)
+                MultiplyByteInterval();
+
             // Generator current value
             double multiple;
             double sampleValue;
@@ -1345,6 +1370,7 @@ namespace Pronome
         public int BytesPerSec { get; set; }
 
         byte[] cache;
+        int cacheIndex = 0;
 
         public WavFileStream(string fileName)
         {
@@ -1372,14 +1398,14 @@ namespace Pronome
                 CachedStreams.Add(fileName, cache);
                 ms.Dispose();
             }
-            memStream = new MemoryStream(cache);
+            //memStream = new MemoryStream(cache);
             
             // is this a hihat sound?
             if (BeatCell.HiHatOpenFileNames.Contains(fileName)) IsHiHatOpen = true;
             else if (BeatCell.HiHatClosedFileNames.Contains(fileName)) IsHiHatClose = true;
         }
 
-        protected Stream memStream;
+        //protected Stream memStream;
 
         public double Volume
         {
@@ -1418,7 +1444,8 @@ namespace Pronome
                 );
             }
 
-            memStream.Position = 0;
+            //memStream.Position = 0;
+            cacheIndex = 0;
         }
 
         public override long Length
@@ -1436,7 +1463,7 @@ namespace Pronome
 
         public int GetNextInterval()
         {
-            int? curhhd = BeatCollection.CurrentHiHatDuration;
+            //int? curhhd = BeatCollection.CurrentHiHatDuration;
 
             BeatCollection.Enumerator.MoveNext();
             int result = BeatCollection.Enumerator.Current;
@@ -1447,44 +1474,60 @@ namespace Pronome
                 return result;
             }
             // handle random mute
-            if (IsRandomMuted())
-            {
-                // don't update hihat duration if hihat was closed
-                BeatCollection.Enumerator.MoveNext();
-                if (curhhd == 0) BeatCollection.CurrentHiHatDuration = 0;
-                result += BeatCollection.Enumerator.Current;
-                currentlyMuted = true;
-            }
-            else currentlyMuted = false;
+            //if (IsRandomMuted())
+            //{
+            //    //BeatCollection.Enumerator.MoveNext();
+            //    // don't update hihat duration if hihat was closed
+            //    //if (curhhd == 0) BeatCollection.CurrentHiHatDuration = 0;
+            //    //result += BeatCollection.Enumerator.Current;
+            //    currentlyMuted = true;
+            //}
+            //else currentlyMuted = false;
+            currentlyMuted = IsRandomMuted();
 
             previousByteInterval = result;
             
             return result;
         }
 
-        public void MultiplyByteInterval(double factor)
+        public void MultiplyByteInterval()
         {
-            double div = ByteInterval / 4;
-            div *= factor;
-            Layer.Remainder += div - (int)div;
-            ByteInterval = (int)div * 4;
-
-            // multiply the offset aswell
-            if (hasOffset)
+            if (intervalMultiplyCued)
             {
-                div = initialOffset / 4;
-                div *= factor;
-                offsetRemainder += div - (int)div;
-                initialOffset = (int)div * 4;
-            }
+                double div = ByteInterval / 4;
+                div *= intervalMultiplyFactor;
+                Layer.Remainder += div - (int)div;
+                ByteInterval = (int)div * 4;
 
-            // do the hihat cutoff interval
-            if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != null && BeatCollection.CurrentHiHatDuration != 0)
-            {
-                div = (int)BeatCollection.CurrentHiHatDuration / 4;
-                BeatCollection.CurrentHiHatDuration = (int)(div * factor) * 4;
+                // multiply the offset aswell
+                if (hasOffset)
+                {
+                    div = initialOffset / 4;
+                    div *= intervalMultiplyFactor;
+                    offsetRemainder += div - (int)div;
+                    initialOffset = (int)div * 4;
+                }
+
+                // do the hihat cutoff interval
+                if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != null && BeatCollection.CurrentHiHatDuration != 0)
+                {
+                    div = (int)BeatCollection.CurrentHiHatDuration / 4;
+                    BeatCollection.CurrentHiHatDuration = (int)(div * intervalMultiplyFactor) * 4;
+                }
+
+                intervalMultiplyCued = false;
             }
         }
+        public void MultiplyByteInterval(double factor)
+        {
+            if (!intervalMultiplyCued)
+            {
+                intervalMultiplyFactor = factor;
+                intervalMultiplyCued = true;
+            }
+        }
+        bool intervalMultiplyCued = false;
+        double intervalMultiplyFactor;
 
         protected bool IsSilentIntervalSilent() // check if silent interval is currently silent or audible. Perform timing shifts
         {
@@ -1513,6 +1556,7 @@ namespace Pronome
         protected int? randomMuteCountdown = null;
         protected int randomMuteCountdownTotal;
         protected bool currentlyMuted = false;
+
         protected bool IsRandomMuted()
         {
             bool result;
@@ -1550,7 +1594,7 @@ namespace Pronome
                     if (!sp.IsPitch)
                     {
                         WavFileStream wfs = sp as WavFileStream;
-                        if (wfs.IsHiHatOpen && wfs.BeatCollection.CurrentHiHatDuration > 0 && !wfs.currentlyMuted)
+                        if (wfs.IsHiHatOpen)
                         {
                             wfs.BeatCollection.CurrentHiHatDuration += BeatCollection.Enumerator.Current;
                         }
@@ -1560,6 +1604,9 @@ namespace Pronome
 
             return result;
         }
+
+        /** <summary>Was hihat was open on previouse interval?</summary> */
+        bool openHiHatPrevShut = false;
 
         public void SetOffset(double value)
         {
@@ -1600,54 +1647,171 @@ namespace Pronome
         public override int Read(byte[] buffer, int offset, int count)
         {
             int bytesCopied = 0;
-            //int cacheSize = cache.Length;
+            int cacheSize = cache.Length;
+
+            // perform interval multiplication if cued
+            if (intervalMultiplyCued)
+            {
+                MultiplyByteInterval();
+            }
 
             while (bytesCopied < count)
             {
                 if (hasOffset)
                 {
-                    Array.Copy(new byte[4], 0, buffer, bytesCopied + offset, 4);
-                    initialOffset -= 4;
-                    bytesCopied += 4;
+                    int subtract = initialOffset > count - bytesCopied ? count - bytesCopied : initialOffset;
+                    initialOffset -= subtract;
+                    Array.Copy(new byte[subtract], 0, buffer, bytesCopied + offset, subtract);
+                    bytesCopied += subtract;
+
                     if (initialOffset == 0)
                     {
                         Layer.Remainder += offsetRemainder;
                         hasOffset = false;
                     }
-                    continue;
                 }
 
-                // reset the stream position and get new interval if interval is up
                 if (ByteInterval == 0)
                 {
+                    // determine if hihat was previously shut. Used in case hihat was shut and now got muted so we need to stay silent.
+                    if (IsHiHatOpen) openHiHatPrevShut = BeatCollection.CurrentHiHatDuration <= 0 || (openHiHatPrevShut && currentlyMuted);
+
                     ByteInterval = GetNextInterval();
-                    
-                    if (!silentIntvlSilent && !currentlyMuted)
-                        memStream.Position = 0;
+
+                    if (!silentIntvlSilent && !currentlyMuted) cacheIndex = 0;
                 }
 
-                // read from stream
-                int result = 0;
-                if (!(IsHiHatOpen && BeatCollection.CurrentHiHatDuration == 0) && !Layer.IsMuted && !(Layer.SoloGroupEngaged && !Layer.IsSoloed))
-                    result = memStream.Read(buffer, bytesCopied + offset, 4);
-
-                // check if end of file was reached
-                if (result == 0)
+                if (cacheIndex < cacheSize && !(IsHiHatOpen && currentlyMuted && openHiHatPrevShut)) // play from the sample
                 {
-                    Array.Copy(new byte[4], 0, buffer, bytesCopied + offset, 4);
+                    // have to keep 4 byte alignment throughout
+                    int offsetMod = (offset + bytesCopied) % 4;
+                    if (offsetMod != 0)
+                    {
+                        bytesCopied += (4 - offsetMod);
+                        ByteInterval -= (4 - offsetMod);
+                    }
+
+                    int chunkSize = new int[] { cacheSize - cacheIndex, ByteInterval, count - bytesCopied }.Min();
+
+                    int chunkSizeMod = chunkSize % 4;
+                    if (chunkSizeMod != 0)
+                    {
+                        chunkSize += (4 - chunkSizeMod);
+                        ByteInterval -= (4 - chunkSizeMod);
+                    }
+
+                    if (ByteInterval <= 0)
+                    {
+                        int carry = ByteInterval < 0 ? ByteInterval : 0;
+
+                        ByteInterval = GetNextInterval();
+                        ByteInterval += carry;
+                        if (!currentlyMuted)
+                            cacheIndex = 0;
+                    }
+
+                    // dont read more than cache size
+                    if (chunkSize > cacheSize - cacheIndex)
+                    {
+                        chunkSize = cacheSize - cacheIndex;
+                    }
+
+                    // if hihat open sound, account for duration
+                    if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration > 0)
+                    {
+                        if (chunkSize >= BeatCollection.CurrentHiHatDuration)
+                        {
+                            chunkSize = (int)BeatCollection.CurrentHiHatDuration;
+                        }
+                        else BeatCollection.CurrentHiHatDuration -= chunkSize;
+                    }
+
+                    if (chunkSize >= 4)
+                    {
+                        // check for muting
+                        if (Layer.IsMuted || (Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed) || IsHiHatOpen && BeatCollection.CurrentHiHatDuration == 0)
+                        {
+                            Array.Copy(new byte[buffer.Length], 0, buffer, offset + bytesCopied, chunkSize); // muted
+                        }
+                        else
+                        {
+                            Array.Copy(cache, cacheIndex, buffer, offset + bytesCopied, chunkSize);
+                        }
+
+                        cacheIndex += chunkSize;
+                        bytesCopied += chunkSize;
+                        ByteInterval -= chunkSize;
+
+                        if (IsHiHatOpen && chunkSize == BeatCollection.CurrentHiHatDuration)
+                            BeatCollection.CurrentHiHatDuration = 0; // hihat duration is up
+                    }
                 }
-
-                bytesCopied += 4;
-                ByteInterval -= 4;
-
-                if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != 0)
+                else // silence
                 {
-                    BeatCollection.CurrentHiHatDuration -= 4;
+                    int smallest = Math.Min(ByteInterval, count - bytesCopied);
+
+                    Array.Copy(new byte[smallest], 0, buffer, offset + bytesCopied, smallest);
+
+                    ByteInterval -= smallest;
+                    bytesCopied += smallest;
                 }
             }
 
             return count;
         }
+
+        //public override int Read(byte[] buffer, int offset, int count)
+        //{
+        //    int bytesCopied = 0;
+        //    //int cacheSize = cache.Length;
+        //
+        //    while (bytesCopied < count)
+        //    {
+        //        if (hasOffset)
+        //        {
+        //            Array.Copy(new byte[4], 0, buffer, bytesCopied + offset, 4);
+        //            initialOffset -= 4;
+        //            bytesCopied += 4;
+        //            if (initialOffset == 0)
+        //            {
+        //                Layer.Remainder += offsetRemainder;
+        //                hasOffset = false;
+        //            }
+        //            continue;
+        //        }
+        //
+        //        // reset the stream position and get new interval if interval is up
+        //        if (ByteInterval == 0)
+        //        {
+        //            ByteInterval = GetNextInterval();
+        //            
+        //            if (!silentIntvlSilent) //&& !currentlyMuted)
+        //                memStream.Position = 0;
+        //            Console.WriteLine(currentlyMuted);
+        //        }
+        //
+        //        int result = 0;
+        //        // read from stream
+        //        if (!(IsHiHatOpen && BeatCollection.CurrentHiHatDuration == 0) && !Layer.IsMuted && !(Layer.SoloGroupEngaged && !Layer.IsSoloed))
+        //            result = memStream.Read(buffer, bytesCopied + offset, 4);
+        //
+        //        // check if end of file was reached
+        //        if (result == 0)
+        //        {
+        //            Array.Copy(new byte[4], 0, buffer, bytesCopied + offset, 4);
+        //        }
+        //
+        //        bytesCopied += 4;
+        //        ByteInterval -= 4;
+        //
+        //        if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != 0)
+        //        {
+        //            BeatCollection.CurrentHiHatDuration -= 4;
+        //        }
+        //    }
+        //
+        //    return count;
+        //}
 
         static public string GetFileByName(string name)
         {
@@ -1718,7 +1882,7 @@ namespace Pronome
 
         void IStreamProvider.Dispose()
         {
-            memStream.Dispose();
+            //memStream.Dispose();
             sourceStream.Dispose();
             Channel.Dispose();
             Dispose();
