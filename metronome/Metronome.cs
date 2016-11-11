@@ -22,6 +22,9 @@ namespace Pronome
         /** <summary>The singleton instance.</summary> */
         static Metronome Instance;
 
+        /** <summary>Used for recording to a wav file.</summary>*/
+        protected WaveFileWriter Writer;
+
         /** <summary>A collection of all the layers.</summary> */
         [DataMember]
         public List<Layer> Layers = new List<Layer>();
@@ -129,6 +132,26 @@ namespace Pronome
         public void Pause()
         {
             Player.Pause();
+        }
+
+        /** <summary>Record the beat to a wav file.</summary>
+         * <param name="seconds">Number of seconds to record</param>
+         * <param name="fileName">Name of file to record to</param>
+         */
+        public void Record(float seconds, string fileName)
+        {
+            if (fileName.Substring(-4).ToLower() != ".wav") // append wav extension
+                fileName += ".wav";
+            Writer = new WaveFileWriter(fileName, Mixer.WaveFormat);
+
+            int bytesToRec = (int)(Mixer.WaveFormat.AverageBytesPerSecond / 4 * seconds);
+            // align bytes
+            bytesToRec -= bytesToRec % 4;
+            float[] buffer = new float[bytesToRec];
+            Mixer.Read(buffer, 0, bytesToRec);
+            Writer.WriteSamples(buffer, 0, bytesToRec);
+            Writer.Dispose();
+            buffer = null;
         }
 
         /** <summary>Get the elapsed playing time.</summary> */

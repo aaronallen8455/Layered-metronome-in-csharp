@@ -20,19 +20,25 @@ namespace Pronome
             //new Layer("[[1@0,1.5|.5]2,.25(2)]2,1@0,2,!1!1@0,.5,1.25!2.75!,.5,.75,1.5,.25(2)", WavFileStream.GetFileByName("Snare Rim V3"));
             //new Layer(".5", WavFileStream.GetFileByName("HiHat Half Center V1"));
 
+            new Layer(".5@0,[.5(3),.5@47,.25,.5,1.25]2,!3!.75,1,.75,.5@47,.25,1.5,!4!.5@47,1.5,.5,.25", WavFileStream.GetFileByName("Snare Center V2"));
+            new Layer("[.75,3.25]3,.75,1.25,.75,1.25", WavFileStream.GetFileByName("Kick Drum V3"));
+            new Layer("3*4+.25@0,.25@28,3.5", WavFileStream.GetFileByName("FloorTom V2"));
+            new Layer(".25@0,[1,.5,.25@20,.25@22,.25@20,.5@22,.5,.25,.5]2,!3!.75,.5,1/6(3),.5@14,.25,.5,.75+1,!4!.5,.75,.25,.5(2),.5", WavFileStream.GetFileByName("HiHat Half Center V2"));
+            // todo: why does that @14 get cut sometimes?
+
             ////
             //var layer1 = new Layer("[1,2/3,1/3]4,{$s}2/3", "A4");
             //new Layer("1", "A5");
             //var layer2 = new Layer("1,2/3,1/3", WavFileStream.GetFileByName("Ride Center V3"));
-            new Layer("1,1,1/3@19", WavFileStream.GetFileByName("HiHat Pedal V2"));
+            //new Layer("1,1,1/3@19", WavFileStream.GetFileByName("HiHat Pedal V2"));
 
             //Metronome.Load("metronome");
             //var metronome = Metronome.GetInstance();
-            metronome.SetRandomMute(50);
+            //metronome.SetRandomMute(50);
             metronome.Play();
-            
+            //metronome.Record(30, "test.wav");
             Console.ReadKey();
-            //metronome.Stop();
+            metronome.Stop();
             //metronome.ChangeTempo(50f);
             //Console.ReadKey();
             //metronome.ChangeTempo(38f);
@@ -40,10 +46,10 @@ namespace Pronome
             //metronome.Stop();
             //metronome.Play();
             //Console.ReadKey();
-            metronome.Stop();
+            //metronome.Stop();
             metronome.Dispose();
 
-            Console.ReadKey();
+            //Console.ReadKey();
         }
     }
 }

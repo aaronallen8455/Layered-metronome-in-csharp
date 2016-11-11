@@ -209,6 +209,22 @@ namespace Pronome
 
                 // prevents open sound getting chopped if closed sound occurs before.
                 if (IsHiHatOpen && Layer.HasHiHatClosed) HiHatMuteInitiated = true;
+
+                // if this is a hihat down, pass it's time position to all hihat opens in this layer
+                if (IsHiHatClose && Layer.HasHiHatOpen && !silentIntvlSilent && !currentlyMuted && hasOffset)
+                {
+                    int total = initialOffset;
+                    int cycles = total / 2560;
+                    int bytes = total % 2560;
+
+                    // assign the hihat cutoff to all open hihat sounds.
+                    IEnumerable hhos = Layer.AudioSources.Where(x => BeatCell.HiHatOpenFileNames.Contains(x.Key)).Select(x => x.Value);
+                    foreach (WavFileStream hho in hhos)
+                    {
+                        hho.HiHatByteToMute = bytes;
+                        hho.HiHatCycleToMute = cycles;
+                    }
+                }
             }
         }
 
@@ -366,7 +382,7 @@ namespace Pronome
                         }
                         cacheIndex = 0;
                     }
-
+                    
                     ByteInterval = GetNextInterval();
 
                     // if this is a hihat down, pass it's time position to all hihat opens in this layer
@@ -430,7 +446,6 @@ namespace Pronome
 
                         }
                         else BeatCollection.CurrentHiHatDuration -= chunkSize;
-
                     }
 
                     if (chunkSize >= 4)

@@ -18,8 +18,8 @@ namespace Pronome
             Beats = beats.Select((x) => BeatCell.ConvertFromBpm(x, src)).ToArray();
             Enumerator = GetEnumerator();
             isWav = src.WaveFormat.AverageBytesPerSecond == 64000;
-            if (hhDuration != 0)
-                CurrentHiHatDuration = (int)hhDuration * 4;
+            //if (hhDuration != 0)
+            //    CurrentHiHatDuration = (int)hhDuration * 4;
         }
 
         public IEnumerator<int> GetEnumerator()
