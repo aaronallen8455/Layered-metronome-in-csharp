@@ -5,20 +5,25 @@ using NAudio.Wave;
 
 namespace Pronome
 {
+    /**<summary>An audio stream for pitch 'beeps'.</summary>*/
     public class PitchStream : ISampleProvider, IStreamProvider
     {
-        // Wave format
+        /**<summary>The WaveFormat object for this stream.</summary>*/
         private readonly WaveFormat waveFormat;
 
+        /**<summary>The BeatCollection object, contains enumerator for byte interval values.</summary>*/
         public SourceBeatCollection BeatCollection { get; set; }
 
+        /**<summary>Test for whether this is a pitch source.</summary>*/
         public bool IsPitch { get { return true; } }
 
         // Const Math
         private const double TwoPi = 2 * Math.PI;
 
+        /**<summary>The number of bytes/Second for this audio stream.</summary>*/
         public int BytesPerSec { get; set; }
 
+        /**<summary>The layer that this audiosource is used in.</summary>*/
         public Layer Layer { get; set; }
 
         // Generator variable
@@ -31,6 +36,7 @@ namespace Pronome
             // Default
             Frequency = BaseFrequency = 440.0;
             Volume = .6f;
+            //Gain = .6f;
             Pan = 0;
             BytesPerSec = waveFormat.AverageBytesPerSecond / 8;
             freqEnum = Frequencies.Values.GetEnumerator();
@@ -160,18 +166,9 @@ namespace Pronome
         bool intervalMultiplyCued = false;
         double intervalMultiplyFactor;
 
-        double volume;
         public double Volume
         {
-            get
-            {
-                return volume;
-            }
-
-            set
-            {
-                volume = Gain = value;
-            }
+            get; set;
         }
 
         private volatile float pan;
@@ -200,14 +197,7 @@ namespace Pronome
                 previousByteInterval = result;
                 return result;
             }
-            // handle random mute
-            //if (IsRandomMuted())
-            //{
-            //    //BeatCollection.Enumerator.MoveNext();
-            //    //result += BeatCollection.Enumerator.Current;
-            //    currentlyMuted = true;
-            //}
-            //else currentlyMuted = false;
+            
             currentlyMuted = IsRandomMuted();
 
             previousByteInterval = result;
@@ -244,10 +234,10 @@ namespace Pronome
             // init countdown
             if (randomMuteCountdown == null && Metronome.GetInstance().RandomMuteSeconds > 0)
             {
-                randomMuteCountdown = randomMuteCountdownTotal = Metronome.GetInstance().RandomMuteSeconds * BytesPerSec;
+                randomMuteCountdown = randomMuteCountdownTotal = Metronome.GetInstance().RandomMuteSeconds * BytesPerSec - InitialOffset;
             }
 
-            int rand = (int)(Metronome.Rand.NextDouble() * 100);
+            int rand = Metronome.GetRandomNum();
 
             if (randomMuteCountdown == null)
                 return rand < Metronome.GetInstance().RandomMutePercent;

@@ -125,8 +125,8 @@ namespace Pronome
                         refIndex = Metronome.GetInstance().Layers.ElementAtOrDefault(refIndex) == null ? 0 : refIndex;
                         refBeat = Regex.Replace(Metronome.GetInstance().Layers[refIndex].ParsedString, @"!.*?!", "");
 
-                        // remove sound source modifiers for non self references
-                        refBeat = Regex.Replace(refBeat, @"@[a-gA-G]?[#b]?[\d.]+", "");
+                        // remove sound source modifiers for non self references, unless its @0
+                        refBeat = Regex.Replace(refBeat, @"@[a-gA-G]?[#b]?[1-9.]+", "");
                     }
                     // remove references and their innermost nest from the referenced beat
                     while (refBeat.Contains('$'))
@@ -155,7 +155,7 @@ namespace Pronome
             {
                 var match = Regex.Match(beat, @"\{([^}]*)}([^,\]]+)"); // match the inside and the factor
                 // insert the multiplication
-                string inner = Regex.Replace(match.Groups[1].Value, @"(?<!\]\d+)(?=([\],+-]|$))", "*" + match.Groups[2].Value);
+                string inner = Regex.Replace(match.Groups[1].Value, @"(?<!\]\d*)(?=([\]\(,+-]|$))", "*" + match.Groups[2].Value);
                 // switch the multiplier to be in front of pitch modifiers
                 inner = Regex.Replace(inner, @"(@[a-gA-G]?#?\d+)(\*[\d.*/]+)", "$2$1");
                 // insert into beat
@@ -165,7 +165,7 @@ namespace Pronome
             // handle single cell repeats
             while (Regex.IsMatch(beat, @"[^\]]\(\d+\)"))
             {
-                var match = Regex.Match(beat, @"([.\d+\-/*]+@?[a-gA-G]?#?)\((\d+)\)([\d\-+/*.]*)");
+                var match = Regex.Match(beat, @"([.\d+\-/*]+@?[a-gA-G]?#?\d*)\((\d+)\)([\d\-+/*.]*)");
                 StringBuilder result = new StringBuilder(beat.Substring(0, match.Index));
                 for (int i = 0; i < int.Parse(match.Groups[2].Value); i++)
                 {
@@ -208,7 +208,7 @@ namespace Pronome
 
             // fix instances of a pitch modifier being following by +0 from repeater
             beat = Regex.Replace(beat, @"(@[a-gA-G]?[#b]?[\d.]+)(\+[\d.\-+/*]+)", "$2$1");
-
+            
             BeatCell[] cells = beat.Split(',').Select((x) =>
             {
                 var match = Regex.Match(x, @"([\d.+\-/*]+)@?(.*)");
@@ -322,7 +322,6 @@ namespace Pronome
                         if (BasePitchSource == default(PitchStream))
                         {
                             BasePitchSource = new PitchStream();
-                            //BasePitchSource.SetFrequency(beat[i].SourceName);
                             BasePitchSource.SetFrequency(beat[i].SourceName, beat[i]);
                             BasePitchSource.BaseFrequency = PitchStream.ConvertFromSymbol(beat[i].SourceName); // make the base freq
                             BasePitchSource.Layer = this;
@@ -437,6 +436,12 @@ namespace Pronome
 
         /** <summary>When a close hihat interval occurs, push a false or a true if it was muted along with the new interval value.</summary> */
         public Stack<KeyValuePair<bool, double>> HiHatCloseIsMutedStack = new Stack<KeyValuePair<bool, double>>();
+
+        /**<summary>Sum up all the Bpm values for beat cells.</summary>*/
+        public double GetTotalBpmValue()
+        {
+            return Beat.Select(x => x.Bpm).Sum();
+        }
 
         /** <summary>Reset this layer so that it will play from the start.</summary> */
         public void Reset()

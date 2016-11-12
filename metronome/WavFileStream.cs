@@ -30,7 +30,7 @@ namespace Pronome
         byte[] cache;
         /**<summary>Current position in the cached sound source byte array.</summary>*/
         int cacheIndex = 0;
-
+        
         /**<summary>Constructor</summary>*/
         public WavFileStream(string fileName)
         {
@@ -216,7 +216,7 @@ namespace Pronome
                     int total = initialOffset;
                     int cycles = total / 2560;
                     int bytes = total % 2560;
-
+                    
                     // assign the hihat cutoff to all open hihat sounds.
                     IEnumerable hhos = Layer.AudioSources.Where(x => BeatCell.HiHatOpenFileNames.Contains(x.Key)).Select(x => x.Value);
                     foreach (WavFileStream hho in hhos)
@@ -231,9 +231,8 @@ namespace Pronome
         protected bool IsSilentIntervalSilent() // check if silent interval is currently silent or audible. Perform timing shifts
         {
             if (!Metronome.GetInstance().IsSilentInterval) return false;
-
             //currentSlntIntvl -= previousByteInterval;
-            currentSlntIntvl -= ByteInterval + initialOffset;
+            currentSlntIntvl -= previousByteInterval;
             if (currentSlntIntvl <= 0)
             {
                 do
@@ -269,10 +268,10 @@ namespace Pronome
             // init countdown
             if (randomMuteCountdown == null && Metronome.GetInstance().RandomMuteSeconds > 0)
             {
-                randomMuteCountdown = randomMuteCountdownTotal = Metronome.GetInstance().RandomMuteSeconds * BytesPerSec;
+                randomMuteCountdown = randomMuteCountdownTotal = Metronome.GetInstance().RandomMuteSeconds * BytesPerSec - initialOffset;
             }
 
-            int rand = (int)(Metronome.Rand.NextDouble() * 100);
+            int rand = Metronome.GetRandomNum();
             if (randomMuteCountdown == null)
             {
                 result = rand < Metronome.GetInstance().RandomMutePercent;
@@ -280,7 +279,7 @@ namespace Pronome
             else
             {
                 // countdown
-                if (randomMuteCountdown > 0) randomMuteCountdown -= ByteInterval + initialOffset; //previousByteInterval;
+                if (randomMuteCountdown > 0) randomMuteCountdown -= previousByteInterval; //previousByteInterval;
                 if (randomMuteCountdown < 0) randomMuteCountdown = 0;
 
                 float factor = (float)(randomMuteCountdownTotal - randomMuteCountdown) / randomMuteCountdownTotal;
@@ -324,6 +323,8 @@ namespace Pronome
             SilentInterval = BeatCell.ConvertFromBpm(silent, this) * 4;
             currentSlntIntvl = (int)AudibleInterval - initialOffset - 4;
             SilentIntervalRemainder = audible - currentSlntIntvl + offsetRemainder;
+
+            SetInitialMuting();
         }
 
         protected int previousByteInterval = 0;
@@ -345,10 +346,11 @@ namespace Pronome
             {
                 MultiplyByteInterval();
             }
-
+            
             // set the upcoming hihat close time for hihat open sounds
             if (!hasOffset && IsHiHatOpen && cycle == HiHatCycleToMute - 1 && !HiHatMuteInitiated)
             {
+                //Console.WriteLine(cycle);
                 BeatCollection.CurrentHiHatDuration = HiHatByteToMute + count;
                 HiHatMuteInitiated = true;
             }
@@ -443,7 +445,7 @@ namespace Pronome
                         if (chunkSize >= BeatCollection.CurrentHiHatDuration)
                         {
                             chunkSize = (int)BeatCollection.CurrentHiHatDuration;
-
+                    
                         }
                         else BeatCollection.CurrentHiHatDuration -= chunkSize;
                     }
@@ -473,6 +475,14 @@ namespace Pronome
                 else // silence
                 {
                     int smallest = Math.Min(ByteInterval, count - bytesCopied);
+
+                    // if hihat closing happens while hihat open sound is in silence
+                    if (IsHiHatOpen && Layer.HasHiHatClosed && BeatCollection.CurrentHiHatDuration > 0)
+                    {
+                        BeatCollection.CurrentHiHatDuration -= smallest;
+                        if (BeatCollection.CurrentHiHatDuration < 0)
+                            BeatCollection.CurrentHiHatDuration = 0;
+                    }
 
                     Array.Copy(new byte[smallest], 0, buffer, offset + bytesCopied, smallest);
 

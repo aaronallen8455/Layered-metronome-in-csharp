@@ -25,6 +25,9 @@ namespace Pronome
         /** <summary>Used for recording to a wav file.</summary>*/
         protected WaveFileWriter Writer;
 
+        /**<summary>Used for playing while writing to wav file.</summary>*/
+        protected StreamToWavFile Recorder;
+
         /** <summary>A collection of all the layers.</summary> */
         [DataMember]
         public List<Layer> Layers = new List<Layer>();
@@ -32,7 +35,9 @@ namespace Pronome
         /** <summary>Constructor</summary> */
         private Metronome()
         {
-            Player.Init(Mixer);
+            Recorder = new StreamToWavFile(Mixer);
+            Player.Init(Recorder);
+            //Player.Init(Mixer);
         }
 
         /** <summary>Get the singleton instance.</summary> */
@@ -126,6 +131,8 @@ namespace Pronome
             {
                 layer.Reset();
             }
+
+            Recorder.Stop();
         }
 
         /** <summary>Pause at current playback point.</summary> */
@@ -134,30 +141,76 @@ namespace Pronome
             Player.Pause();
         }
 
+        /** <summary>Playback and record to wav.</summary>
+         * <param name="fileName">Name of file to record to</param>
+         */
+        public void Record(string fileName)
+        {
+            Recorder.InitRecording(fileName);
+            Play();
+        }
+
         /** <summary>Record the beat to a wav file.</summary>
          * <param name="seconds">Number of seconds to record</param>
          * <param name="fileName">Name of file to record to</param>
          */
-        public void Record(float seconds, string fileName)
+        public void ExportAsWav(double seconds, string fileName)
         {
-            if (fileName.Substring(-4).ToLower() != ".wav") // append wav extension
+            if (fileName.Substring(fileName.Length-4).ToLower() != ".wav") // append wav extension
                 fileName += ".wav";
             Writer = new WaveFileWriter(fileName, Mixer.WaveFormat);
+
+            // if no seconds param, use the complete cycle
+            if (seconds == 0)
+            {
+                seconds = GetQuartersForCompleteCycle() * (60d / Tempo);
+            }
 
             int bytesToRec = (int)(Mixer.WaveFormat.AverageBytesPerSecond / 4 * seconds);
             // align bytes
             bytesToRec -= bytesToRec % 4;
-            float[] buffer = new float[bytesToRec];
-            Mixer.Read(buffer, 0, bytesToRec);
-            Writer.WriteSamples(buffer, 0, bytesToRec);
+
+            int bytesRecorded = 0;
+            int cycleSize = 1280;
+
+            while (bytesRecorded < bytesToRec)
+            {
+                int chunk = Math.Min(cycleSize, bytesToRec - bytesRecorded);
+
+                float[] buffer = new float[chunk];
+                Mixer.Read(buffer, 0, chunk);
+                Writer.WriteSamples(buffer, 0, chunk);
+                bytesRecorded += chunk;
+                buffer = null;
+            }
+
             Writer.Dispose();
-            buffer = null;
         }
 
         /** <summary>Get the elapsed playing time.</summary> */
         public TimeSpan GetElapsedTime()
         {
             return Player.PlaybackPosition;
+        }
+
+        /**<summary>Get the quarter note value of a complete beat cycle.</summary>*/
+        public double GetQuartersForCompleteCycle()
+        {
+            Func<double, double, double> Gcf = null;
+            Gcf = delegate (double x, double y)
+            {
+                double r = x % y;
+                if (Math.Round(r, 5) == 0) return y;
+
+                return Gcf(y, r);
+            };
+
+            Func<double, double, double> Lcm = delegate (double x, double y)
+            {
+                return x * y / Gcf(x, y);
+            };
+
+            return Layers.Select(x => x.GetTotalBpmValue()).Aggregate((a, b) => Lcm(a, b));
         }
 
         /** <summary>The tempo in BPM.</summary> */
@@ -198,7 +251,15 @@ namespace Pronome
         }
 
         /** <summary>Used for random muting.</summary> */
-        public static Random Rand = new Random();
+        protected static Random Rand = new Random();
+        /**<summary>Get random number btwn 1 and 100.</summary>*/
+        public static int GetRandomNum()
+        {
+            lock (Rand)
+            {
+                return (int)(Rand.NextDouble() * 100);
+            }
+        }
 
         /** <summary>Is a random muting value set?</summary> */
         [DataMember]
@@ -329,8 +390,11 @@ namespace Pronome
         /** <summary>Dispose of resoures from all members.</summary> */
         public void Dispose()
         {
-            Player.Dispose();
+            Player.Stop();
+            Recorder.Dispose();
             Layers.ForEach((x) => x.Dispose());
+            Player.Dispose();
+            //Writer.Dispose();
         }
     }
 }
