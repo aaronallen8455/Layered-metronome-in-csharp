@@ -44,13 +44,19 @@ namespace Pronome
 
         public int Read(float[] buffer, int offset, int count)
         {
-            int result = _mixer.Read(buffer, offset, count);
-
-            if (count > 0 && IsRecording)
+            int result = 0;
+            try
             {
-                //write samples to file
-                _writer.WriteSamples(buffer, offset, count);
+                result = _mixer.Read(buffer, offset, count);
+
+                if (count > 0 && IsRecording)
+                {
+                    //write samples to file
+                    _writer.WriteSamples(buffer, offset, count);
+                }
             }
+            catch (NullReferenceException) { }
+
             if (count == 0)
             {
                 Dispose();

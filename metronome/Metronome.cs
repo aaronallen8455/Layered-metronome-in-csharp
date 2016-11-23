@@ -4,6 +4,8 @@ using System.Linq;
 using System.IO;
 using System.Runtime.Serialization;
 using System.Xml;
+using System.Threading;
+using System.Text.RegularExpressions;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -146,6 +148,7 @@ namespace Pronome
          */
         public void Record(string fileName)
         {
+            fileName = ValidateFileName(fileName);
             Recorder.InitRecording(fileName);
             Play();
         }
@@ -156,6 +159,7 @@ namespace Pronome
          */
         public void ExportAsWav(double seconds, string fileName)
         {
+            fileName = ValidateFileName(fileName);
             if (fileName.Substring(fileName.Length-4).ToLower() != ".wav") // append wav extension
                 fileName += ".wav";
             Writer = new WaveFileWriter(fileName, Mixer.WaveFormat);
@@ -184,7 +188,20 @@ namespace Pronome
                 buffer = null;
             }
 
+            Layers.ForEach(x => x.Reset());
+
             Writer.Dispose();
+        }
+
+        /**<summary>Remove invalid characters from filename.</summary>
+         * <param name="fileName">Desired file name.</param>
+         */
+        public static string ValidateFileName(string fileName)
+        {
+            char[] invalidChars = Path.GetInvalidFileNameChars();
+            string invalidString = Regex.Escape(new string(invalidChars));
+            fileName = Regex.Replace(fileName, "[" + invalidString + "]", "");
+            return fileName;
         }
 
         /** <summary>Get the elapsed playing time.</summary> */
@@ -251,14 +268,11 @@ namespace Pronome
         }
 
         /** <summary>Used for random muting.</summary> */
-        protected static Random Rand = new Random();
-        /**<summary>Get random number btwn 1 and 100.</summary>*/
+        protected static ThreadLocal<Random> Rand = new ThreadLocal<Random>(() => new Random(new Guid().GetHashCode()));
+        /**<summary>Get random number btwn 0 and 99.</summary>*/
         public static int GetRandomNum()
         {
-            lock (Rand)
-            {
-                return (int)(Rand.NextDouble() * 100);
-            }
+            return Rand.Value.Next(99);
         }
 
         /** <summary>Is a random muting value set?</summary> */
@@ -346,6 +360,7 @@ namespace Pronome
          * <param name="name">The name for this beat.</param> */
         static public void Save(string name)
         {
+            name = ValidateFileName(name);
             var ds = new DataContractSerializer(typeof(Metronome));
             using (Stream s = File.Create($"saves/{name}.beat"))
             using (var w = XmlDictionaryWriter.CreateBinaryWriter(s))
@@ -358,6 +373,7 @@ namespace Pronome
          * <param name="fileName">The name of the beat to open.</param> */
         static public void Load(string fileName)
         {
+            fileName = ValidateFileName(fileName);
             var ds = new DataContractSerializer(typeof(Metronome));
             using (Stream s = File.OpenRead($"saves/{fileName}.beat"))
             using (var w = XmlDictionaryReader.CreateBinaryReader(s, XmlDictionaryReaderQuotas.Max))
@@ -387,6 +403,11 @@ namespace Pronome
             }
         }
 
+        ~Metronome()
+        {
+            Dispose();
+        }
+
         /** <summary>Dispose of resoures from all members.</summary> */
         public void Dispose()
         {
@@ -394,6 +415,7 @@ namespace Pronome
             Recorder.Dispose();
             Layers.ForEach((x) => x.Dispose());
             Player.Dispose();
+            Mixer = null;
             //Writer.Dispose();
         }
     }

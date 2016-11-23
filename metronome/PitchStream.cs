@@ -26,13 +26,16 @@ namespace Pronome
         /**<summary>The layer that this audiosource is used in.</summary>*/
         public Layer Layer { get; set; }
 
-        // Generator variable
+        /**<summary>Used in sine wave generation.</summary>*/
         private float nSample;
 
+        /**<summary>Constructor</summary>
+         * <param name="channel">Number of channels</param>
+         * <param name="sampleRate">Samples per second</param>
+         */
         public PitchStream(int sampleRate = 16000, int channel = 2)
         {
             waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channel);
-
             // Default
             Frequency = BaseFrequency = 440.0;
             Volume = .6f;
@@ -46,12 +49,19 @@ namespace Pronome
                 SetSilentInterval(Metronome.GetInstance().AudibleInterval, Metronome.GetInstance().SilentInterval);
         }
 
+        /**<summary>Add a frequency to the frequency enumerator que.</summary>
+         * <param name="cell">The cell that uses the pitch.</param>
+         * <param name="symbol">The pitch symbol. ex. A4</param>
+         */
         public void SetFrequency(string symbol, BeatCell cell)
         {
             Frequencies.Add(cell, ConvertFromSymbol(symbol));
             freqEnum = Frequencies.Values.GetEnumerator();
         }
 
+        /**<summary>Convert a pitch symbol or raw number into a hertz value.</summary>
+         * <param name="symbol">The symbol to convert from.</param>
+         */
         public static double ConvertFromSymbol(string symbol)
         {
             string note = new string(symbol.TakeWhile((x) => !char.IsNumber(x)).ToArray()).ToLower();
@@ -70,6 +80,7 @@ namespace Pronome
             return frequency;
         }
 
+        /**<summary>Used in converting symbols to pitches.</summary>*/
         protected static Dictionary<string, int> Notes = new Dictionary<string, int>
         {
             { "a", 12 }, { "a#", 13 }, { "bb", 13 }, { "b", 14 }, { "c", 3 },
@@ -78,21 +89,21 @@ namespace Pronome
             { "g#", 11 }, { "ab", 11 }
         };
 
-        //public WaveStream Channel { get; set; }
-
+        /**<summary>The format of this stream.</summary>*/
         public WaveFormat WaveFormat
         {
             get { return waveFormat; }
         }
 
-        // dictionary of frequencies and the cells they are tied to.
-        //public List<KeyValuePair<BeatCell, double>> Frequencies = new List<KeyValuePair<BeatCell, double>>();
+        /**<summary>A dictionary of frequencies and the cells they are tied to.</summary>*/
         public Dictionary<BeatCell, double> Frequencies = new Dictionary<BeatCell, double>();
+        /**<summary>Used to cycle through the pitch frequencies used by this source.</summary>*/
         protected IEnumerator<double> freqEnum;
 
+        /**<summary>Reset state to default values.</summary>*/
         public void Reset()
         {
-            freqEnum = Frequencies.Values.GetEnumerator();
+            freqEnum.Reset(); //= Frequencies.Values.GetEnumerator();
             BeatCollection.Enumerator = BeatCollection.GetEnumerator();
             ByteInterval = 0;
             previousSample = 0;
@@ -114,64 +125,79 @@ namespace Pronome
             }
         }
 
-        // get the next frequency in the sequence
+        /**<summary>Get the next frequency in the sequence.</summary>*/
         public double GetNextFrequency()
         {
             if (freqEnum.MoveNext()) return freqEnum.Current;
             else
             {
-                freqEnum = Frequencies.Values.GetEnumerator();
-                freqEnum.MoveNext();
-                return freqEnum.Current;
+                freqEnum.Reset();
+                return GetNextFrequency();
+                //freqEnum.MoveNext();
+                //return freqEnum.Current;
             }
         }
 
-        // the current frequency
+        /**<summary>The current frequency in hertz.</summary>*/
         public double Frequency { get; set; }
 
-        // the base frequency. used if cell doesn't specify a pitch
+        /**<summary>The frequency used if cell doesn't specify a pitch directly.</summary>*/
         public double BaseFrequency { get; set; }
 
-        public double Gain { get; set; }
+        /**<summary>Used to create the fade out of the beep sound. Resets to the value of Volume on interval completetion.</summary>*/
+        protected double Gain { get; set; }
 
+        /**<summary>If a multiply is cued, perform operation on all relevant members at the start of a stream read.</summary>*/
         public void MultiplyByteInterval()
         {
-            if (intervalMultiplyCued)
+            lock (_multLock)
             {
-                BeatCollection.MultiplyBeatValues();
-
-                double mult = intervalMultiplyFactor * ByteInterval;
-                ByteInterval = (int)mult;
-                Layer.Remainder += mult - ByteInterval;
-
-                // multiply the offset aswell
-                if (hasOffset)
+                if (intervalMultiplyCued)
                 {
-                    mult = intervalMultiplyFactor * InitialOffset;
-                    InitialOffset = (int)mult;
-                    OffsetRemainder += mult - InitialOffset;
-                }
+                    BeatCollection.MultiplyBeatValues();
 
-                intervalMultiplyCued = false;
+                    double mult = intervalMultiplyFactor * ByteInterval;
+                    ByteInterval = (int)mult;
+                    Layer.Remainder += mult - ByteInterval;
+
+                    // multiply the offset aswell
+                    if (hasOffset)
+                    {
+                        mult = intervalMultiplyFactor * InitialOffset;
+                        InitialOffset = (int)mult;
+                        OffsetRemainder += mult - InitialOffset;
+                    }
+
+                    intervalMultiplyCued = false;
+                }
             }
         }
+        /**<summary>Cue a multiply operation to occur at the start of the next stream read.</summary>
+         * <param name="factor">The number to multiply by</param>
+         */
         public void MultiplyByteInterval(double factor)
         {
-            if (!intervalMultiplyCued)
+            lock(_multLock)
             {
-                intervalMultiplyFactor = factor;
-                intervalMultiplyCued = true;
+                if (!intervalMultiplyCued)
+                {
+                    intervalMultiplyFactor = factor;
+                    intervalMultiplyCued = true;
+                }
             }
         }
         bool intervalMultiplyCued = false;
         double intervalMultiplyFactor;
+        object _multLock = new object();
 
+        /**<summary>The volume control for this stream.</summary>*/
         public double Volume
         {
             get; set;
         }
 
         private volatile float pan;
+        /**<summary>Gets/sets the pan value. -1 to 1.</summary>*/
         public float Pan
         {
             get { return pan; }
@@ -186,6 +212,7 @@ namespace Pronome
         private float left;
         private float right;
 
+        /**<summary>Gets the next interval value and determines if it will be muted.</summary>*/
         public int GetNextInterval()
         {
             BeatCollection.Enumerator.MoveNext();
@@ -211,6 +238,10 @@ namespace Pronome
         protected bool silentIntvlSilent = false; // currently silent
         protected double SilentIntervalRemainder; // fractional portion
 
+        /**<summary>Sets the silent interval.</summary>
+         * <param name="audible">Number of quarter notes audible.</param>
+         * <param name="silent">Number of quarter notes silent.</param>
+         */
         public void SetSilentInterval(double audible, double silent)
         {
             AudibleInterval = BeatCell.ConvertFromBpm(audible, this);
@@ -219,10 +250,11 @@ namespace Pronome
             SilentIntervalRemainder = audible - currentSlntIntvl + OffsetRemainder;
         }
 
-        protected int? randomMuteCountdown = null;
-        protected int randomMuteCountdownTotal;
-        protected bool currentlyMuted = false;
+        protected int? randomMuteCountdown = null; // If the rand mute has a countdown, we track it here
+        protected int randomMuteCountdownTotal; // The rand mute initial countdown value.
+        protected bool currentlyMuted = false; // true if sound is randomly muted.
 
+        /**<summary>Returns true if the note should be randomly muted.</summary>*/
         protected bool IsRandomMuted()
         {
             if (!Metronome.GetInstance().IsRandomMute)
@@ -252,6 +284,7 @@ namespace Pronome
             }
         }
 
+        /**<summary>Returns true if silent interval is currently silent.</summary>*/
         protected bool IsSilentIntervalSilent() // check if silent interval is currently silent or audible. Perform timing shifts
         {
             if (!Metronome.GetInstance().IsSilentInterval) return false;
@@ -276,6 +309,9 @@ namespace Pronome
             return silentIntvlSilent;
         }
 
+        /**<summary>Set the amount of offset in samples.</summary>
+         * <param name="value">Value in samples.</param>
+         */
         public void SetOffset(double value)
         {
             InitialOffset = (int)(value / 2);
@@ -283,6 +319,7 @@ namespace Pronome
             hasOffset = true;
         }
 
+        /**<summary>Get the current amount of offset in samples.</summary>*/
         public double GetOffset()
         {
             return InitialOffset + OffsetRemainder;
@@ -296,8 +333,13 @@ namespace Pronome
         protected int previousByteInterval;
         protected int ByteInterval;
 
+        double multiple; // used in sine wave calculation
+
         double previousSample;
 
+        /**<summary>Reads from the audio stream.</summary>
+         * <param name="buffer">Sample array buffer.</param>
+         */
         public int Read(float[] buffer, int offset, int count)
         {
             int outIndex = offset;
@@ -306,9 +348,8 @@ namespace Pronome
             if (intervalMultiplyCued)
                 MultiplyByteInterval();
 
-            // Generator current value
-            double multiple;
             double sampleValue;
+
             // Complete Buffer
             for (int sampleCount = 0; sampleCount < count / waveFormat.Channels; sampleCount++)
             {
@@ -328,7 +369,7 @@ namespace Pronome
                     // add remainder to layer.R
                     continue;
                 }
-
+                bool freqChanged = false;
                 // interval is over, reset
                 if (ByteInterval == 0)
                 {
@@ -340,12 +381,13 @@ namespace Pronome
                         // what should nsample be to create a smooth transition?
                         if (previousSample != 0 && Gain != 0)
                         {
-                            multiple = TwoPi * Frequency / waveFormat.SampleRate;
+                            if (Frequency != curFreq)
+                                multiple = TwoPi * Frequency / waveFormat.SampleRate;
                             nSample = Convert.ToSingle(Math.Asin(previousSample / Volume) / multiple);
                             nSample += .5f; // seems to help
                         }
                         else nSample = 0;
-
+                        freqChanged = true;
                         Gain = Volume;
                     }
                     else Frequency = curFreq; //retain frequency if random/interval muting occurs.
@@ -367,7 +409,11 @@ namespace Pronome
                     else
                     {
                         // Sin Generator
-                        multiple = TwoPi * Frequency / waveFormat.SampleRate;
+                        if (freqChanged)
+                        {
+                            multiple = TwoPi * Frequency / waveFormat.SampleRate; // reuse this value
+                            freqChanged = false;
+                        }
                         sampleValue = previousSample = Gain * Math.Sin(nSample * multiple);
                     }
                     Gain -= .0003; //.0002 for .6 .0003 for 1

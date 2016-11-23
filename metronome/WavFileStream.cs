@@ -65,15 +65,15 @@ namespace Pronome
             if (met.IsSilentInterval)
                 SetSilentInterval(met.AudibleInterval, met.SilentInterval);
 
+            // is this a hihat sound?
+            if (BeatCell.HiHatOpenFileNames.Contains(fileName)) IsHiHatOpen = true;
+            else if (BeatCell.HiHatClosedFileNames.Contains(fileName)) IsHiHatClose = true;
+
             // determine if first sound will be muted
             if (met.IsRandomMute || met.IsSilentInterval)
             {
                 SetInitialMuting();
             }
-
-            // is this a hihat sound?
-            if (BeatCell.HiHatOpenFileNames.Contains(fileName)) IsHiHatOpen = true;
-            else if (BeatCell.HiHatClosedFileNames.Contains(fileName)) IsHiHatClose = true;
         }
 
         /**<summary>The volume for this sound source.</summary>*/
@@ -117,7 +117,7 @@ namespace Pronome
             }
             // TODO: hihat open settings
             HiHatOpenIsMuted = false;
-            HiHatMuteInitiated = false;
+            //HiHatMuteInitiated = false;
             HiHatCycleToMute = 0;
             cycle = 0;
 
@@ -158,42 +158,59 @@ namespace Pronome
             return result;
         }
 
+        object _multLock = new object();
         public void MultiplyByteInterval()
         {
-            if (intervalMultiplyCued)
+            lock (_multLock)
             {
-                BeatCollection.MultiplyBeatValues();
-
-                double div = ByteInterval / 4;
-                div *= intervalMultiplyFactor;
-                Layer.Remainder += div - (int)div;
-                ByteInterval = (int)div * 4;
-
-                // multiply the offset aswell
-                if (hasOffset)
+                if (intervalMultiplyCued)
                 {
-                    div = initialOffset / 4;
+                    BeatCollection.MultiplyBeatValues();
+
+                    double div = ByteInterval / 4;
                     div *= intervalMultiplyFactor;
-                    offsetRemainder += div - (int)div;
-                    initialOffset = (int)div * 4;
-                }
+                    Layer.Remainder += div - (int)div;
+                    ByteInterval = (int)div * 4;
 
-                // do the hihat cutoff interval
-                if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != null && BeatCollection.CurrentHiHatDuration != 0)
-                {
-                    div = (int)BeatCollection.CurrentHiHatDuration / 4;
-                    BeatCollection.CurrentHiHatDuration = (int)(div * intervalMultiplyFactor) * 4;
-                }
+                    // multiply the offset aswell
+                    if (hasOffset)
+                    {
+                        div = initialOffset / 4;
+                        div *= intervalMultiplyFactor;
+                        offsetRemainder += div - (int)div;
+                        initialOffset = (int)div * 4;
+                    }
 
-                intervalMultiplyCued = false;
+                    // do the hihat cutoff interval
+                    if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != null && BeatCollection.CurrentHiHatDuration != 0)
+                    {
+                        div = (int)BeatCollection.CurrentHiHatDuration / 4;
+                        BeatCollection.CurrentHiHatDuration = (int)(div * intervalMultiplyFactor) * 4;
+                    }
+                    // recalculate the hihat count and byte to cutoff values
+                    if (IsHiHatOpen && Layer.HasHiHatClosed)
+                    {
+                        int countDiff = HiHatCycleToMute - cycle;
+                        int totalBytes = countDiff * 2560 + HiHatByteToMute;
+                        totalBytes = (int)(totalBytes * intervalMultiplyFactor);
+                        HiHatCycleToMute = cycle + totalBytes / 2560;
+                        HiHatByteToMute = totalBytes % 2560;
+                        HiHatByteToMute -= HiHatByteToMute % 4; // align
+                    }
+
+                    intervalMultiplyCued = false;
+                }
             }
         }
         public void MultiplyByteInterval(double factor)
         {
-            if (!intervalMultiplyCued)
+            lock (_multLock)
             {
-                intervalMultiplyFactor = factor;
-                intervalMultiplyCued = true;
+                if (!intervalMultiplyCued)
+                {
+                    intervalMultiplyFactor = factor;
+                    intervalMultiplyCued = true;
+                }
             }
         }
         bool intervalMultiplyCued = false;
@@ -208,7 +225,7 @@ namespace Pronome
                 silentIntvlSilent = IsSilentIntervalSilent();
 
                 // prevents open sound getting chopped if closed sound occurs before.
-                if (IsHiHatOpen && Layer.HasHiHatClosed) HiHatMuteInitiated = true;
+                //if (IsHiHatOpen && Layer.HasHiHatClosed) HiHatMuteInitiated = true;
 
                 // if this is a hihat down, pass it's time position to all hihat opens in this layer
                 if (IsHiHatClose && Layer.HasHiHatOpen && !silentIntvlSilent && !currentlyMuted && hasOffset)
@@ -333,7 +350,7 @@ namespace Pronome
 
         public int HiHatCycleToMute;
         public int HiHatByteToMute;
-        bool HiHatMuteInitiated = false;
+        //bool HiHatMuteInitiated = false;
         int cycle = 0;
 
         public override int Read(byte[] buffer, int offset, int count)
@@ -348,11 +365,10 @@ namespace Pronome
             }
             
             // set the upcoming hihat close time for hihat open sounds
-            if (!hasOffset && IsHiHatOpen && cycle == HiHatCycleToMute - 1 && !HiHatMuteInitiated)
+            if (!hasOffset && IsHiHatOpen && cycle == HiHatCycleToMute - 1)// && !HiHatMuteInitiated)
             {
-                //Console.WriteLine(cycle);
                 BeatCollection.CurrentHiHatDuration = HiHatByteToMute + count;
-                HiHatMuteInitiated = true;
+                //HiHatMuteInitiated = true;
             }
 
             while (bytesCopied < count)
@@ -380,7 +396,7 @@ namespace Pronome
                         if (IsHiHatOpen)
                         {
                             HiHatOpenIsMuted = false;
-                            HiHatMuteInitiated = false;
+                            //HiHatMuteInitiated = false;
                         }
                         cacheIndex = 0;
                     }
@@ -393,7 +409,7 @@ namespace Pronome
                         int total = bytesCopied + ByteInterval + offset;
                         int cycles = total / count + cycle;
                         int bytes = total % count;
-
+                        
                         // assign the hihat cutoff to all open hihat sounds.
                         IEnumerable hhos = Layer.AudioSources.Where(x => BeatCell.HiHatOpenFileNames.Contains(x.Key)).Select(x => x.Value);
                         foreach (WavFileStream hho in hhos)
@@ -407,21 +423,21 @@ namespace Pronome
                 if (cacheIndex < cacheSize) // play from the sample
                 {
                     // have to keep 4 byte alignment throughout
-                    int offsetMod = (offset + bytesCopied) % 4;
-                    if (offsetMod != 0)
-                    {
-                        bytesCopied += (4 - offsetMod);
-                        ByteInterval -= (4 - offsetMod);
-                    }
+                    //int offsetMod = (offset + bytesCopied) % 4;
+                    //if (offsetMod != 0)
+                    //{
+                    //    bytesCopied += (4 - offsetMod);
+                    //    ByteInterval -= (4 - offsetMod);
+                    //}
 
                     int chunkSize = new int[] { cacheSize - cacheIndex, ByteInterval, count - bytesCopied }.Min();
 
-                    int chunkSizeMod = chunkSize % 4;
-                    if (chunkSizeMod != 0)
-                    {
-                        chunkSize += (4 - chunkSizeMod);
-                        ByteInterval -= (4 - chunkSizeMod);
-                    }
+                    //int chunkSizeMod = chunkSize % 4;
+                    //if (chunkSizeMod != 0)
+                    //{
+                    //    chunkSize += (4 - chunkSizeMod);
+                    //    ByteInterval -= (4 - chunkSizeMod);
+                    //}
 
                     if (ByteInterval <= 0)
                     {

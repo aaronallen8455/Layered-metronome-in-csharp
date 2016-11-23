@@ -83,9 +83,15 @@ namespace Pronome
          * <param name="offset">Amount of offset</param>
          * <param name="pan">Set the pan</param>
          * <param name="volume">Set the volume</param> */
-        public Layer(string beat, string baseSourceName, string offset = "", float pan = 0f, float volume = 1f)
+        public Layer(string beat, string baseSourceName = null, string offset = "", float pan = 0f, float volume = 1f)
         {
-            SetBaseSource(baseSourceName);
+            if (baseSourceName == null) // auto generate a pitch if no source is specified
+            {
+                SetBaseSource(GetAutoPitch());
+            }
+            else
+                SetBaseSource(baseSourceName);
+
             if (offset != "")
                 SetOffset(offset);
             Parse(beat); // parse the beat code into this layer
@@ -157,7 +163,7 @@ namespace Pronome
                 // insert the multiplication
                 string inner = Regex.Replace(match.Groups[1].Value, @"(?<!\]\d*)(?=([\]\(,+-]|$))", "*" + match.Groups[2].Value);
                 // switch the multiplier to be in front of pitch modifiers
-                inner = Regex.Replace(inner, @"(@[a-gA-G]?#?\d+)(\*[\d.*/]+)", "$2$1");
+                inner = Regex.Replace(inner, @"(@[a-gA-G]?[#b]?\d+)(\*[\d.*/]+)", "$2$1");
                 // insert into beat
                 beat = beat.Substring(0, match.Index) + inner + beat.Substring(match.Index + match.Length);
             }
@@ -165,7 +171,7 @@ namespace Pronome
             // handle single cell repeats
             while (Regex.IsMatch(beat, @"[^\]]\(\d+\)"))
             {
-                var match = Regex.Match(beat, @"([.\d+\-/*]+@?[a-gA-G]?#?\d*)\((\d+)\)([\d\-+/*.]*)");
+                var match = Regex.Match(beat, @"([.\d+\-/*]+@?[a-gA-G]?[#b]?\d*)\((\d+)\)([\d\-+/*.]*)");
                 StringBuilder result = new StringBuilder(beat.Substring(0, match.Index));
                 for (int i = 0; i < int.Parse(match.Groups[2].Value); i++)
                 {
@@ -236,7 +242,9 @@ namespace Pronome
          * <param name="baseSourceName">Name of source to use.</param> */
         public void SetBaseSource(string baseSourceName)
         {
-            BaseSourceName = baseSourceName;
+            // remove baes source from AudioSources if exists
+            if (!IsPitch && BaseSourceName != null) AudioSources.Remove(BaseSourceName); // for pitch layers, base source is not in AudioSources.
+
             // is sample or pitch source?
             if (baseSourceName.Count() <= 5)
             {
@@ -256,6 +264,29 @@ namespace Pronome
                 if (BeatCell.HiHatOpenFileNames.Contains(baseSourceName)) HasHiHatOpen = true;
                 else if (BeatCell.HiHatClosedFileNames.Contains(baseSourceName)) HasHiHatClosed = true;
             }
+
+            // reassign source to existing cells that use the base source.
+            if (Beat != null)
+            {
+                var baseBeats = Beat.Where(x => x.SourceName == BaseSourceName).ToList();
+                SetBeatCollectionOnSources(baseBeats);
+
+                // reasses the hihat status of base source cells
+                if (BeatCell.HiHatClosedFileNames.Contains(baseSourceName))
+                    baseBeats.ForEach(x => x.IsHiHatClosed = true);
+                else
+                    baseBeats.ForEach(x => x.IsHiHatClosed = false);
+                if (BeatCell.HiHatOpenFileNames.Contains(baseSourceName))
+                    baseBeats.ForEach(x => x.IsHiHatOpen = true);
+                else
+                    baseBeats.ForEach(x => x.IsHiHatOpen = false);
+
+                // reasses layer hihat status
+                HasHiHatOpen = Beat.Any(x => BeatCell.HiHatOpenFileNames.Contains(x.SourceName));
+                HasHiHatClosed = Beat.Any(x => BeatCell.HiHatClosedFileNames.Contains(x.SourceName));
+            }
+
+            BaseSourceName = baseSourceName;
         }
 
         /** <summary>Set the offset for this layer.</summary>
@@ -374,11 +405,13 @@ namespace Pronome
                 }
             }
 
-            SetBeatCollectionOnSources();
+            SetBeatCollectionOnSources(Beat);
         }
 
-        /** <summary>Set the beat collections for each sound source.</summary> */
-        public void SetBeatCollectionOnSources()
+        /** <summary>Set the beat collections for each sound source.</summary> 
+         * <param name="Beat">The cells to process</param>
+         */
+        public void SetBeatCollectionOnSources(List<BeatCell> Beat)
         {
             List<IStreamProvider> completed = new List<IStreamProvider>();
 
@@ -401,7 +434,7 @@ namespace Pronome
 
                     Beat[i].AudioSource.SetOffset(BeatCell.ConvertFromBpm(offsetAccumulate, Beat[i].AudioSource));
                 }
-                // iterate over beats starting with current one
+                // iterate over beats starting with current one. Aggregate with cells that have the same audio source.
                 for (int p = i; ; p++)
                 {
 
@@ -434,8 +467,42 @@ namespace Pronome
             }
         }
 
-        /** <summary>When a close hihat interval occurs, push a false or a true if it was muted along with the new interval value.</summary> */
-        public Stack<KeyValuePair<bool, double>> HiHatCloseIsMutedStack = new Stack<KeyValuePair<bool, double>>();
+        /**<summary>Get a random pitch based on existing pitch layers</summary>*/
+        public string GetAutoPitch()
+        {
+            string note;
+            byte octave;
+
+            string[] noteNames =
+            {
+                "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"
+            };
+
+            ushort[] intervals = { 3, 4, 5, 7, 8, 9 };
+
+            do
+            {
+                // determine the octave
+                octave = Metronome.GetRandomNum() > 49 ? (byte)5 : (byte)4;
+                // 80% chance to make a sonorous interval with last pitch layer
+                if (Metronome.GetRandomNum() < 80)
+                {
+                    var last = Metronome.GetInstance().Layers.Last(x => IsPitch);
+                    int index = Array.IndexOf(noteNames, last.BaseSourceName.TakeWhile(x => !char.IsNumber(x)));
+                    index += intervals[Metronome.GetRandomNum() / (100 / 6)];
+                    if (index > 11) index -= 12;
+                    note = noteNames[index];
+                }
+                else
+                {
+                    // randomly pick note
+                    note = noteNames[Metronome.GetRandomNum() / (100 / 12)];
+                }
+            }
+            while (Metronome.GetInstance().Layers.Where(x => x.IsPitch).Any(x => x.BaseSourceName == note + octave));
+
+            return note + octave;
+        }
 
         /**<summary>Sum up all the Bpm values for beat cells.</summary>*/
         public double GetTotalBpmValue()
