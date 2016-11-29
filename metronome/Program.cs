@@ -37,7 +37,6 @@ namespace Pronome
             //Metronome.Load("metronome");
             //var metronome = Metronome.GetInstance();
             //metronome.SetRandomMute(50);
-
             
             metronome.Play();
             //metronome.Record("test");

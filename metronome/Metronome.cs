@@ -382,6 +382,12 @@ namespace Pronome
             }
         }
 
+        /**<summary>Gets the contents of the saved beats directory.</summary>*/
+        static public string[] GetSavedBeats()
+        {
+            return Directory.GetFiles("saves/").Select(x => x.Replace(".beat", "").Replace("saves/", "")).ToArray();
+        }
+
         /** <summary>Prepare to deserialize. Used in loading a saved beat.</summary> */
         [OnDeserializing]
         void BeforeDeserialization(StreamingContext sc)
