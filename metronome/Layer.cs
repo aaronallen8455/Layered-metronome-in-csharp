@@ -161,7 +161,7 @@ namespace Pronome
             {
                 var match = Regex.Match(beat, @"\{([^}]*)}([^,\]]+)"); // match the inside and the factor
                 // insert the multiplication
-                string inner = Regex.Replace(match.Groups[1].Value, @"(?<!\]\d*)(?=([\]\(,+-]|$))", "*" + match.Groups[2].Value);
+                string inner = Regex.Replace(match.Groups[1].Value, @"(?<!\]\d*)(?=([\]\(\|,+-]|$))", "*" + match.Groups[2].Value);
                 // switch the multiplier to be in front of pitch modifiers
                 inner = Regex.Replace(inner, @"(@[a-gA-G]?[#b]?\d+)(\*[\d.*/]+)", "$2$1");
                 // insert into beat
@@ -214,7 +214,7 @@ namespace Pronome
 
             // fix instances of a pitch modifier being following by +0 from repeater
             beat = Regex.Replace(beat, @"(@[a-gA-G]?[#b]?[\d.]+)(\+[\d.\-+/*]+)", "$2$1");
-            
+            //Console.WriteLine(beat);
             BeatCell[] cells = beat.Split(',').Select((x) =>
             {
                 var match = Regex.Match(x, @"([\d.+\-/*]+)@?(.*)");
@@ -248,16 +248,20 @@ namespace Pronome
             // is sample or pitch source?
             if (baseSourceName.Count() <= 5)
             {
-                BasePitchSource = new PitchStream();
-                BasePitchSource.BaseFrequency = PitchStream.ConvertFromSymbol(baseSourceName);
-                BasePitchSource.Layer = this;
+                BasePitchSource = new PitchStream()
+                {
+                    BaseFrequency = PitchStream.ConvertFromSymbol(baseSourceName),
+                    Layer = this
+                };
                 BaseAudioSource = BasePitchSource; // needs to be cast back to ISampleProvider when added to mixer
                 IsPitch = true;
             }
             else
             {
-                BaseAudioSource = new WavFileStream(baseSourceName);
-                BaseAudioSource.Layer = this;
+                BaseAudioSource = new WavFileStream(baseSourceName)
+                {
+                    Layer = this
+                };
                 AudioSources.Add(baseSourceName, BaseAudioSource);
                 IsPitch = false;
 
@@ -335,8 +339,10 @@ namespace Pronome
                     // should cells of the same source use the same audiosource instead of creating new source each time? Yes
                     if (!AudioSources.ContainsKey(beat[i].SourceName))
                     {
-                        var wavStream = new WavFileStream(beat[i].SourceName);
-                        wavStream.Layer = this;
+                        var wavStream = new WavFileStream(beat[i].SourceName)
+                        {
+                            Layer = this
+                        };
                         AudioSources.Add(beat[i].SourceName, wavStream);
                     }
                     beat[i].AudioSource = AudioSources[beat[i].SourceName];

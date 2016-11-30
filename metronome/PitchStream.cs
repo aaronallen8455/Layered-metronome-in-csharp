@@ -38,8 +38,6 @@ namespace Pronome
             waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channel);
             // Default
             Frequency = BaseFrequency = 440.0;
-            Volume = .6f;
-            //Gain = .6f;
             Pan = 0;
             BytesPerSec = waveFormat.AverageBytesPerSecond / 8;
             freqEnum = Frequencies.Values.GetEnumerator();
@@ -146,6 +144,8 @@ namespace Pronome
 
         /**<summary>Used to create the fade out of the beep sound. Resets to the value of Volume on interval completetion.</summary>*/
         protected double Gain { get; set; }
+        double gainStep = .0003; // the amount that gain is subtracted by for each byte to produce fade.
+        double newGainStep; // set when Volume changes and takes effect when byte interval resets.
 
         /**<summary>If a multiply is cued, perform operation on all relevant members at the start of a stream read.</summary>*/
         public void MultiplyByteInterval()
@@ -193,8 +193,15 @@ namespace Pronome
         /**<summary>The volume control for this stream.</summary>*/
         public double Volume
         {
-            get; set;
+            get { return _volume; }
+            set
+            {
+                double ratio = value / _volume;
+                _volume = value;
+                newGainStep = value * .0003;
+            }
         }
+        double _volume = 1;
 
         private volatile float pan;
         /**<summary>Gets/sets the pan value. -1 to 1.</summary>*/
@@ -389,6 +396,8 @@ namespace Pronome
                         else nSample = 0;
                         freqChanged = true;
                         Gain = Volume;
+                        if (gainStep != newGainStep) // set new gainstep if volume was changed
+                            gainStep = newGainStep;
                     }
                     else Frequency = curFreq; //retain frequency if random/interval muting occurs.
                 }
@@ -416,7 +425,7 @@ namespace Pronome
                         }
                         sampleValue = previousSample = Gain * Math.Sin(nSample * multiple);
                     }
-                    Gain -= .0003; //.0002 for .6 .0003 for 1
+                    Gain -= gainStep;
                 }
                 nSample++;
 

@@ -1,8 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Collections;
 using System.Linq;
-using System.IO;
 using NAudio.Wave;
 
 namespace Pronome
@@ -25,42 +23,14 @@ namespace Pronome
 
         /**<summary>The byte rate for this stream.</summary>*/
         public int BytesPerSec { get; set; }
-
-
-        /**<summary>The cached sound source to read from.</summary>*/
-        //byte[] cache;
-        /**<summary>Current position in the cached sound source byte array.</summary>*/
-        //int cacheIndex = 0;
         
         /**<summary>Constructor</summary>*/
         public WavFileStream(string fileName)
         {
-            //if (fileName == "silentbeat")
-            //{
-            //    sourceStream = new WaveFileReader(FileNameIndex[1, 0]);
-            //    //sourceStream = new WaveFileReader(new MemoryStream(new byte[4]));
-            //}
-            //else
-            //{
+            
             sourceStream = new WaveFileReader(fileName);
-            //}
             BytesPerSec = sourceStream.WaveFormat.AverageBytesPerSecond;
             Channel = new WaveChannel32(this);
-            
-            // check if in cache store
-            //if (CachedStreams.ContainsKey(fileName))
-            //{
-            //    cache = CachedStreams[fileName];
-            //}
-            //else // add to cache
-            //{
-            //    MemoryStream ms = new MemoryStream();
-            //    sourceStream.CopyTo(ms);
-            //    cache = ms.GetBuffer();
-            //    CachedStreams.Add(fileName, cache);
-            //    ms.Dispose();
-            //}
-            //memStream = new MemoryStream(cache);
 
             Metronome met = Metronome.GetInstance();
             // set audible/silent interval if already exists
@@ -127,11 +97,11 @@ namespace Pronome
             // will first muting occur for first sound?
             SetInitialMuting();
 
-            //memStream.Position = 0;
-            //cacheIndex = 0;
-            sourceStream.Position = 0;
+            // set stream back to start.
+            Position = 0;
         }
 
+        /**<summary>Get the length of the source file in bytes.</summary>*/
         public override long Length
         {
             get { return sourceStream.Length; }
@@ -140,12 +110,14 @@ namespace Pronome
         /**<summary>Not used for wav streams.</summary>*/
         public double Frequency { get; set; }
 
+        /**<summary>Get or set the source stream's position.</summary>*/
         public override long Position
         {
             get { return sourceStream.Position; }
             set { sourceStream.Position = value; }
         }
 
+        /**<summary>Get the next byte interval while also setting the mute status.</summary>*/
         public int GetNextInterval()
         {
             BeatCollection.Enumerator.MoveNext();
@@ -164,6 +136,8 @@ namespace Pronome
         }
 
         object _multLock = new object();
+
+        /**<summary>Perform a cued byte interval multiplication.</summary>*/
         public void MultiplyByteInterval()
         {
             lock (_multLock)
@@ -207,6 +181,9 @@ namespace Pronome
                 }
             }
         }
+        /**<summary>Cue a multiply byte interval operation to occur at next read cycle start.</summary>
+         * <param name="factor">The value by which to multiply</param>
+         */
         public void MultiplyByteInterval(double factor)
         {
             lock (_multLock)
@@ -225,13 +202,9 @@ namespace Pronome
         {
             if (ByteInterval == 0)
             {
-                //cacheIndex = cache.Length;
-                sourceStream.Position = sourceStream.Length;
+                Position = Length;
                 currentlyMuted = IsRandomMuted();
                 silentIntvlSilent = IsSilentIntervalSilent();
-
-                // prevents open sound getting chopped if closed sound occurs before.
-                //if (IsHiHatOpen && Layer.HasHiHatClosed) HiHatMuteInitiated = true;
 
                 // if this is a hihat down, pass it's time position to all hihat opens in this layer
                 if (IsHiHatClose && Layer.HasHiHatOpen && !silentIntvlSilent && !currentlyMuted && hasOffset)
@@ -429,6 +402,7 @@ namespace Pronome
 
                 int chunkSize = new int[] { ByteInterval, count - bytesCopied }.Min();
 
+                // if this is a hihat open sound, determine when it should be stopped by a hihat close sound.
                 if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration > 0)
                 {
                     if (chunkSize >= BeatCollection.CurrentHiHatDuration)
@@ -443,79 +417,8 @@ namespace Pronome
                 if (!Layer.IsMuted && !(Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed) && !HiHatOpenIsMuted)
                     result = sourceStream.Read(buffer, offset + bytesCopied, chunkSize);
 
-                //if (cacheIndex < cacheSize) // play from the sample
-                //{
-                //    // have to keep 4 byte alignment throughout
-                //    //int offsetMod = (offset + bytesCopied) % 4;
-                //    //if (offsetMod != 0)
-                //    //{
-                //    //    bytesCopied += (4 - offsetMod);
-                //    //    ByteInterval -= (4 - offsetMod);
-                //    //}
-                //
-                //
-                //    //int chunkSizeMod = chunkSize % 4;
-                //    //if (chunkSizeMod != 0)
-                //    //{
-                //    //    chunkSize += (4 - chunkSizeMod);
-                //    //    ByteInterval -= (4 - chunkSizeMod);
-                //    //}
-                //
-                //    if (ByteInterval <= 0)
-                //    {
-                //        int carry = ByteInterval < 0 ? ByteInterval : 0;
-                //
-                //        ByteInterval = GetNextInterval();
-                //        ByteInterval += carry;
-                //        if (!currentlyMuted)
-                //            cacheIndex = 0;
-                //    }
-                //
-                //    // dont read more than cache size
-                //    if (chunkSize > cacheSize - cacheIndex)
-                //    {
-                //        chunkSize = cacheSize - cacheIndex;
-                //    }
-                //
-                //    // if hihat open sound, account for duration
-                //    if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration > 0)
-                //    {
-                //        if (chunkSize >= BeatCollection.CurrentHiHatDuration)
-                //        {
-                //            chunkSize = (int)BeatCollection.CurrentHiHatDuration;
-                //    
-                //        }
-                //        else BeatCollection.CurrentHiHatDuration -= chunkSize;
-                //    }
-                //
-                //    if (chunkSize >= 4)
-                //    {
-                //        // check for muting
-                //        if (Layer.IsMuted || (Pronome.Layer.SoloGroupEngaged && !Layer.IsSoloed) || HiHatOpenIsMuted)
-                //        {
-                //            Array.Copy(new byte[buffer.Length], 0, buffer, offset + bytesCopied, chunkSize); // muted
-                //        }
-                //        else
-                //        {
-                //            int result = sourceStream.Read(buffer, offset + bytesCopied, chunkSize);
-                //            //Array.Copy(cache, cacheIndex, buffer, offset + bytesCopied, chunkSize);
-                //            //cacheIndex += chunkSize;
-                //        }
-                //
-                //        if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration == chunkSize)
-                //        {
-                //            HiHatOpenIsMuted = true;
-                //            BeatCollection.CurrentHiHatDuration = 0;
-                //        }
-                //    }
-                //    bytesCopied += chunkSize;
-                //    ByteInterval -= chunkSize;
-                //}
-                //else 
                 if (result == 0) // silence
                 {
-                    //int smallest = Math.Min(ByteInterval, count - bytesCopied);
-
                     // if hihat closing happens while hihat open sound is in silence
                     if (IsHiHatOpen && Layer.HasHiHatClosed && BeatCollection.CurrentHiHatDuration > 0)
                     {
@@ -547,6 +450,7 @@ namespace Pronome
             return count;
         }
 
+        /**<summary>Returns the file name of a sound from the pretty name.</summary>*/
         static public string GetFileByName(string name)
         {
             int length = FileNameIndex.Length;
@@ -554,9 +458,6 @@ namespace Pronome
             flat = FileNameIndex.Cast<string>().ToArray();
             return flat[Array.IndexOf(flat, name) - 1];
         }
-
-        // store streams that have been cached in here
-        static protected Dictionary<string, byte[]> CachedStreams = new Dictionary<string, byte[]>() { { "silentbeat", new byte[4] } };
 
         static public string[,] FileNameIndex = new string[,]
         {
