@@ -148,14 +148,22 @@ namespace Pronome
 
                     double div = ByteInterval / 4;
                     div *= intervalMultiplyFactor;
+                    Layer.Remainder *= intervalMultiplyFactor; // multiply remainder as well
                     Layer.Remainder += div - (int)div;
                     ByteInterval = (int)div * 4;
+                    
+                    if (Layer.Remainder >= 1)
+                    {
+                        ByteInterval += (int)Layer.Remainder * 4;
+                        Layer.Remainder -= (int)Layer.Remainder;
+                    }
 
                     // multiply the offset aswell
                     if (hasOffset)
                     {
                         div = initialOffset / 4;
                         div *= intervalMultiplyFactor;
+                        offsetRemainder *= intervalMultiplyFactor;
                         offsetRemainder += div - (int)div;
                         initialOffset = (int)div * 4;
                     }

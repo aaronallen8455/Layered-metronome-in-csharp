@@ -158,13 +158,21 @@ namespace Pronome
 
                     double mult = intervalMultiplyFactor * ByteInterval;
                     ByteInterval = (int)mult;
+                    Layer.Remainder *= intervalMultiplyFactor;
                     Layer.Remainder += mult - ByteInterval;
+
+                    if (Layer.Remainder >= 1)
+                    {
+                        ByteInterval += (int)Layer.Remainder;
+                        Layer.Remainder -= (int)Layer.Remainder;
+                    }
 
                     // multiply the offset aswell
                     if (hasOffset)
                     {
                         mult = intervalMultiplyFactor * InitialOffset;
                         InitialOffset = (int)mult;
+                        OffsetRemainder *= intervalMultiplyFactor;
                         OffsetRemainder += mult - InitialOffset;
                     }
 
