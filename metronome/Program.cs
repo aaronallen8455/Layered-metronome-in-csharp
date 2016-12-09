@@ -25,7 +25,7 @@ namespace Pronome
             new Layer("[.75,3.25]3,.75,1.25,.75,1.25,{$s}2/3,{$s}4/5", WavFileStream.GetFileByName("Kick Drum V3"));
             new Layer("3*4+.25@0,.25@28,3.5,{$s}2/3,{$s}4/5", WavFileStream.GetFileByName("FloorTom V2"));
             new Layer(".25@0,[1,.5,.25@20,.25@22,.25@20,.5@22,.5,.25,.5]2,!3!.75,.5,1/6,1/6@12(2),.5,.25,.5,.75+1,!4!.5,.75,.25,.5(2),.5,{$s}2/3,{$s}4/5", WavFileStream.GetFileByName("HiHat Half Center V2"));
-
+            new Layer("1", "A7");
             //new Layer("[.75@0,.75,.5,2]3,.75@0,.75,.5+.75,.75,.5", "A4");
             //new Layer("1", "D3");
 
@@ -39,9 +39,11 @@ namespace Pronome
             //Metronome.Load("metronome");
             //var metronome = Metronome.GetInstance();
             //metronome.SetRandomMute(50);
-            Thread.Sleep(500);
+            //Thread.Sleep(500);
+
             metronome.Play();
-            
+            //Console.ReadKey();
+            //metronome.Tempo = 20f;
             //metronome.Record("test");
             //metronome.ExportAsWav(0, "test.wav");
             Console.ReadKey();

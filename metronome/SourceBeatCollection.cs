@@ -8,18 +8,15 @@ namespace Pronome
     {
         Layer Layer;
         double[] Beats;
-        public int? CurrentHiHatDuration = null;
         public IEnumerator<int> Enumerator;
         bool isWav;
 
-        public SourceBeatCollection(Layer layer, double[] beats, IStreamProvider src, double hhDuration)
+        public SourceBeatCollection(Layer layer, double[] beats, IStreamProvider src)
         {
             Layer = layer;
             Beats = beats.Select((x) => BeatCell.ConvertFromBpm(x, src)).ToArray();
             Enumerator = GetEnumerator();
             isWav = src.WaveFormat.AverageBytesPerSecond == 64000;
-            //if (hhDuration != 0)
-            //    CurrentHiHatDuration = (int)hhDuration * 4;
         }
 
         public IEnumerator<int> GetEnumerator()

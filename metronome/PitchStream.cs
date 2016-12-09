@@ -324,6 +324,9 @@ namespace Pronome
             return silentIntvlSilent;
         }
 
+        /**<summary>Empty for this pitches, muting is not determined beforehand.</summary>*/
+        public void SetInitialMuting() { }
+
         /**<summary>Set the amount of offset in samples.</summary>
          * <param name="value">Value in samples.</param>
          */
@@ -357,6 +360,8 @@ namespace Pronome
          */
         public int Read(float[] buffer, int offset, int count)
         {
+            if (count == 2560) { return count; } // account for the occasional blip at start up.
+
             int outIndex = offset;
 
             // perform cued interval multiplication

@@ -23,11 +23,11 @@ namespace Pronome
 
         /**<summary>The byte rate for this stream.</summary>*/
         public int BytesPerSec { get; set; }
-        
+        string fileName;
         /**<summary>Constructor</summary>*/
         public WavFileStream(string fileName)
         {
-            
+            this.fileName = fileName;
             sourceStream = new WaveFileReader(fileName);
             BytesPerSec = sourceStream.WaveFormat.AverageBytesPerSecond;
             Channel = new WaveChannel32(this);
@@ -40,12 +40,12 @@ namespace Pronome
             // is this a hihat sound?
             if (BeatCell.HiHatOpenFileNames.Contains(fileName)) IsHiHatOpen = true;
             else if (BeatCell.HiHatClosedFileNames.Contains(fileName)) IsHiHatClose = true;
-
+            
             // determine if first sound will be muted
-            if (met.IsRandomMute || met.IsSilentInterval)
-            {
-                SetInitialMuting();
-            }
+            //if (met.IsRandomMute || met.IsSilentInterval) is now done in the layer, after all sources have been created
+            //{
+            //    SetInitialMuting();
+            //}
         }
 
         /**<summary>The volume for this sound source.</summary>*/
@@ -168,12 +168,13 @@ namespace Pronome
                         initialOffset = (int)div * 4;
                     }
 
-                    // do the hihat cutoff interval
-                    if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration != null && BeatCollection.CurrentHiHatDuration != 0)
+                    //// do the hihat cutoff interval
+                    if (IsHiHatOpen && CurrentHiHatDuration != 0)
                     {
-                        div = (int)BeatCollection.CurrentHiHatDuration / 4;
-                        BeatCollection.CurrentHiHatDuration = (int)(div * intervalMultiplyFactor) * 4;
+                        div = CurrentHiHatDuration / 4;
+                        CurrentHiHatDuration = (int)(div * intervalMultiplyFactor) * 4;
                     }
+
                     // recalculate the hihat count and byte to cutoff values
                     if (IsHiHatOpen && Layer.HasHiHatClosed)
                     {
@@ -211,8 +212,13 @@ namespace Pronome
             if (ByteInterval == 0)
             {
                 Position = Length;
-                currentlyMuted = IsRandomMuted();
-                silentIntvlSilent = IsSilentIntervalSilent();
+
+                // determine mutings
+                Metronome met = Metronome.GetInstance();
+                if (met.IsRandomMute)
+                    currentlyMuted = IsRandomMuted();
+                if (met.IsSilentInterval)
+                    silentIntvlSilent = IsSilentIntervalSilent();
 
                 // if this is a hihat down, pass it's time position to all hihat opens in this layer
                 if (IsHiHatClose && Layer.HasHiHatOpen && !silentIntvlSilent && !currentlyMuted && hasOffset)
@@ -222,7 +228,7 @@ namespace Pronome
                     int bytes = total % 2560;
 
                     // assign the hihat cutoff to all open hihat sounds.
-                    IEnumerable hhos = Layer.AudioSources.Where(x => BeatCell.HiHatOpenFileNames.Contains(x.Key)).Select(x => x.Value);
+                    IEnumerable hhos = Layer.AudioSources.Values.Where(x => !x.IsPitch && ((WavFileStream)x).IsHiHatOpen);
                     foreach (WavFileStream hho in hhos)
                     {
                         hho.HiHatByteToMute = bytes;
@@ -300,7 +306,7 @@ namespace Pronome
             hasOffset = true;
 
             // is first sound muted?
-            SetInitialMuting();
+            //SetInitialMuting();
         }
 
         public double GetOffset()
@@ -337,13 +343,15 @@ namespace Pronome
 
         public int HiHatCycleToMute;
         public int HiHatByteToMute;
+        int CurrentHiHatDuration = 0;
         //bool HiHatMuteInitiated = false;
         int cycle = 0;
 
         public override int Read(byte[] buffer, int offset, int count)
         {
+            if (count == 5120) { return count; } // somtimes count is double at start for some reason
+
             int bytesCopied = 0;
-            //int cacheSize = cache.Length;
 
             // perform interval multiplication if cued
             if (intervalMultiplyCued)
@@ -354,8 +362,7 @@ namespace Pronome
             // set the upcoming hihat close time for hihat open sounds
             if (!hasOffset && IsHiHatOpen && cycle == HiHatCycleToMute - 1)// && !HiHatMuteInitiated)
             {
-                BeatCollection.CurrentHiHatDuration = HiHatByteToMute + count;
-                //HiHatMuteInitiated = true;
+                CurrentHiHatDuration = HiHatByteToMute + count;
             }
 
             while (bytesCopied < count)
@@ -383,9 +390,7 @@ namespace Pronome
                         if (IsHiHatOpen)
                         {
                             HiHatOpenIsMuted = false;
-                            //HiHatMuteInitiated = false;
                         }
-                        //cacheIndex = 0;
                         sourceStream.Position = 0;
                     }
                     
@@ -411,14 +416,14 @@ namespace Pronome
                 int chunkSize = new int[] { ByteInterval, count - bytesCopied }.Min();
 
                 // if this is a hihat open sound, determine when it should be stopped by a hihat close sound.
-                if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration > 0)
+                if (IsHiHatOpen && CurrentHiHatDuration > 0)
                 {
-                    if (chunkSize >= BeatCollection.CurrentHiHatDuration)
+                    if (chunkSize >= CurrentHiHatDuration)
                     {
-                        chunkSize = (int)BeatCollection.CurrentHiHatDuration;
+                        chunkSize = CurrentHiHatDuration;
 
                     }
-                    else BeatCollection.CurrentHiHatDuration -= chunkSize;
+                    else CurrentHiHatDuration -= chunkSize;
                 }
                 int result = 0;
 
@@ -428,11 +433,11 @@ namespace Pronome
                 if (result == 0) // silence
                 {
                     // if hihat closing happens while hihat open sound is in silence
-                    if (IsHiHatOpen && Layer.HasHiHatClosed && BeatCollection.CurrentHiHatDuration > 0)
+                    if (IsHiHatOpen && Layer.HasHiHatClosed && CurrentHiHatDuration > 0)
                     {
-                        BeatCollection.CurrentHiHatDuration -= chunkSize;
-                        if (BeatCollection.CurrentHiHatDuration < 0)
-                            BeatCollection.CurrentHiHatDuration = 0;
+                        CurrentHiHatDuration -= chunkSize;
+                        if (CurrentHiHatDuration < 0)
+                            CurrentHiHatDuration = 0;
                     }
 
                     Array.Copy(new byte[chunkSize], 0, buffer, offset + bytesCopied, chunkSize);
@@ -442,10 +447,10 @@ namespace Pronome
                 }
                 else
                 {
-                    if (IsHiHatOpen && BeatCollection.CurrentHiHatDuration == chunkSize)
+                    if (IsHiHatOpen && CurrentHiHatDuration == chunkSize)
                     {
                         HiHatOpenIsMuted = true;
-                        BeatCollection.CurrentHiHatDuration = 0;
+                        CurrentHiHatDuration = 0;
                     }
 
                     ByteInterval -= result;

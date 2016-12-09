@@ -29,6 +29,8 @@ namespace Pronome
 
         void MultiplyByteInterval(double factor);
 
+        void SetInitialMuting();
+
         Layer Layer { get; set; }
 
         SourceBeatCollection BeatCollection { get; set; }

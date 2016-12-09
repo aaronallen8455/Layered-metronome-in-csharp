@@ -214,7 +214,7 @@ namespace Pronome
 
             // fix instances of a pitch modifier being following by +0 from repeater
             beat = Regex.Replace(beat, @"(@[a-gA-G]?[#b]?[\d.]+)(\+[\d.\-+/*]+)", "$2$1");
-            //Console.WriteLine(beat);
+            
             BeatCell[] cells = beat.Split(',').Select((x) =>
             {
                 var match = Regex.Match(x, @"([\d.+\-/*]+)@?(.*)");
@@ -385,32 +385,6 @@ namespace Pronome
 
             Beat = beat.ToList();
 
-            // match hihat close sounds to preceding hihat open sound
-            if (Beat.Count(x => x.IsHiHatClosed) != 0 && Beat.Count(x => x.IsHiHatOpen) != 0)
-            {
-                for (int i = 0; i < Beat.Count; i++)
-                {
-                    if (Beat[i].IsHiHatOpen)
-                    {
-                        double accumulator = 0;
-                        // find nearest following close hihat sound.
-                        for (int p = i + 1; p != i; p++)
-                        {
-                            if (p == Beat.Count) { p = -1; continue; } // back to start
-
-                            if (Beat[p].IsHiHatClosed)
-                            {
-                                // set the duration for the open hihat sound.
-                                Beat[i].hhDuration = accumulator + Beat[i].Bpm;
-                                accumulator = 0;
-                                break;
-                            }
-                            else accumulator += Beat[p].Bpm;
-                        }
-                    }
-                }
-            }
-
             SetBeatCollectionOnSources(Beat);
         }
 
@@ -425,7 +399,6 @@ namespace Pronome
             for (int i = 0; i < Beat.Count; i++)
             {
                 List<double> cells = new List<double>();
-                List<double> hhDurations = new List<double>(); // open hihat sound durations.
                 double accumulator = 0;
                 // Once per audio source
                 if (completed.Contains(Beat[i].AudioSource)) continue;
@@ -456,7 +429,6 @@ namespace Pronome
                             accumulator = 0f;
                         }
                         cells.Add(Beat[p].Bpm);
-                        hhDurations.Add(Beat[p].hhDuration);
                     }
                     else accumulator += Beat[p].Bpm;
 
@@ -469,8 +441,11 @@ namespace Pronome
                 }
                 completed.Add(Beat[i].AudioSource);
 
-                Beat[i].AudioSource.BeatCollection = new SourceBeatCollection(this, cells.ToArray(), Beat[i].AudioSource, hhDurations[0]);
+                Beat[i].AudioSource.BeatCollection = new SourceBeatCollection(this, cells.ToArray(), Beat[i].AudioSource);
             }
+
+            // do any initial muting, includes hihat timings
+            AudioSources.Values.ToList().ForEach(x => x.SetInitialMuting());
         }
 
         /**<summary>Get a random pitch based on existing pitch layers</summary>*/
